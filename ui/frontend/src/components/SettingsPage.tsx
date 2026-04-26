@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Loader, Save } from 'lucide-react'
-import { getSettings, saveSettings, Settings } from '../api/client'
+import { CheckCircle, Loader, Save, XCircle } from 'lucide-react'
+import { getSettings, saveSettings, Settings, getSecrets, saveSecrets, testVault, SecretsConfig, VaultConfig } from '../api/client'
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings>({
@@ -14,15 +14,55 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  // Secrets state
+  const [secretsProvider, setSecretsProvider] = useState<'none' | 'env' | 'vault'>('none')
+  const [vault, setVault] = useState<VaultConfig>({ auth_method: 'token', mount: 'secret' })
+  const [vaultTesting, setVaultTesting] = useState(false)
+  const [vaultTestResult, setVaultTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
+  const [secretsSaving, setSecretsSaving] = useState(false)
+  const [secretsSaved, setSecretsSaved] = useState(false)
+
   useEffect(() => { getSettings().then(d => setS(prev => ({ ...prev, ...d }))).catch(() => {}) }, [])
+  useEffect(() => {
+    getSecrets().then(d => {
+      if (d?.vault) { setSecretsProvider('vault'); setVault(prev => ({ ...prev, ...d.vault })) }
+    }).catch(() => {})
+  }, [])
 
   const set = (k: keyof Settings, v: unknown) => setS(c => ({ ...c, [k]: v }))
+  const setV = (k: keyof VaultConfig, v: unknown) => {
+    setVault(c => ({ ...c, [k]: v }))
+    setVaultTestResult(null)
+  }
 
   const handleSave = async () => {
     setSaving(true)
     try { await saveSettings(s); setSaved(true); setTimeout(() => setSaved(false), 2000) }
     catch {}
     setSaving(false)
+  }
+
+  const handleSecretsSave = async () => {
+    setSecretsSaving(true)
+    try {
+      const payload: SecretsConfig = secretsProvider === 'vault' ? { vault } : {}
+      await saveSecrets(payload)
+      setSecretsSaved(true)
+      setTimeout(() => setSecretsSaved(false), 2000)
+    } catch {}
+    setSecretsSaving(false)
+  }
+
+  const handleVaultTest = async () => {
+    setVaultTesting(true)
+    setVaultTestResult(null)
+    try {
+      const result = await testVault(vault)
+      setVaultTestResult(result)
+    } catch (e: unknown) {
+      setVaultTestResult({ ok: false, error: e instanceof Error ? e.message : 'Connection failed' })
+    }
+    setVaultTesting(false)
   }
 
   return (
@@ -149,6 +189,115 @@ export default function SettingsPage() {
           </select>
         </div>
       </div>
+
+      {/* ── Secrets management ── */}
+      <div style={S.card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h2 style={S.sectionTitle}>Secrets management</h2>
+            <p style={S.sectionSub}>Store credentials outside of config.yml using environment variables or HashiCorp Vault</p>
+          </div>
+          <button style={S.btnPrimary} onClick={handleSecretsSave} disabled={secretsSaving}>
+            {secretsSaving ? <Loader size={13} /> : <Save size={13} />}
+            {secretsSaved ? 'Saved!' : 'Save'}
+          </button>
+        </div>
+
+        <div>
+          <label style={S.label}>Secrets provider</label>
+          <select style={S.input} value={secretsProvider}
+            onChange={e => { setSecretsProvider(e.target.value as 'none' | 'env' | 'vault'); setVaultTestResult(null) }}>
+            <option value="none">None — credentials stored in config.yml</option>
+            <option value="env">Environment variables only (no extra config needed)</option>
+            <option value="vault">HashiCorp Vault</option>
+          </select>
+          {secretsProvider === 'env' && (
+            <div style={S.hint}>
+              Use <code style={{ color: '#94a3b8' }}>${'{'}ENV_VAR{'}'}</code> anywhere in config.yml — including inline, e.g.&nbsp;
+              <code style={{ color: '#94a3b8' }}>jdbc://${'{'}DB_HOST{'}'}/mydb</code>. No additional configuration required.
+            </div>
+          )}
+        </div>
+
+        {secretsProvider === 'vault' && (<>
+          <div style={S.grid2}>
+            <div>
+              <label style={S.label}>Vault URL</label>
+              <input style={S.input} value={vault.url ?? ''} placeholder="https://vault.example.com"
+                onChange={e => setV('url', e.target.value)} />
+              <div style={S.hint}>Or set <code style={{ color: '#94a3b8' }}>VAULT_ADDR</code> env var.</div>
+            </div>
+            <div>
+              <label style={S.label}>KV mount point</label>
+              <input style={S.input} value={vault.mount ?? 'secret'} placeholder="secret"
+                onChange={e => setV('mount', e.target.value)} />
+              <div style={S.hint}>KV v2 mount — default is <code style={{ color: '#94a3b8' }}>secret</code>.</div>
+            </div>
+          </div>
+
+          <div>
+            <label style={S.label}>Authentication method</label>
+            <select style={S.input} value={vault.auth_method ?? 'token'}
+              onChange={e => setV('auth_method', e.target.value as 'token' | 'approle')}>
+              <option value="token">Token</option>
+              <option value="approle">AppRole (recommended for production)</option>
+            </select>
+          </div>
+
+          {(vault.auth_method ?? 'token') === 'token' ? (
+            <div>
+              <label style={S.label}>Vault token</label>
+              <input style={{ ...S.input, fontFamily: 'monospace' }} type="password"
+                value={vault.token ?? ''} placeholder="hvs.xxxxxx  (or use ${VAULT_TOKEN})"
+                onChange={e => setV('token', e.target.value)} />
+              <div style={S.hint}>Tip: use <code style={{ color: '#94a3b8' }}>${'{'}VAULT_TOKEN{'}'}</code> to read from an env var instead of hardcoding.</div>
+            </div>
+          ) : (<>
+            <div style={S.grid2}>
+              <div>
+                <label style={S.label}>Role ID</label>
+                <input style={{ ...S.input, fontFamily: 'monospace' }}
+                  value={vault.role_id ?? ''} placeholder="${VAULT_ROLE_ID}"
+                  onChange={e => setV('role_id', e.target.value)} />
+              </div>
+              <div>
+                <label style={S.label}>Secret ID</label>
+                <input style={{ ...S.input, fontFamily: 'monospace' }} type="password"
+                  value={vault.secret_id ?? ''} placeholder="${VAULT_SECRET_ID}"
+                  onChange={e => setV('secret_id', e.target.value)} />
+              </div>
+            </div>
+            <div style={S.hint}>AppRole credentials can themselves reference env vars, e.g. <code style={{ color: '#94a3b8' }}>${'{'}VAULT_SECRET_ID{'}'}</code>.</div>
+          </>)}
+
+          <div>
+            <label style={S.label}>Vault namespace <span style={{ color: '#475569', fontWeight: 400 }}>(Enterprise only)</span></label>
+            <input style={S.input} value={vault.namespace ?? ''} placeholder="Optional — leave blank for open-source Vault"
+              onChange={e => setV('namespace', e.target.value)} />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button style={S.btnSecondary} onClick={handleVaultTest} disabled={vaultTesting}>
+              {vaultTesting ? <Loader size={13} /> : null}
+              {vaultTesting ? 'Testing…' : 'Test connection'}
+            </button>
+            {vaultTestResult && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
+                color: vaultTestResult.ok ? '#22c55e' : '#f87171' }}>
+                {vaultTestResult.ok
+                  ? <><CheckCircle size={14} /> Connected successfully</>
+                  : <><XCircle size={14} /> {vaultTestResult.error}</>}
+              </span>
+            )}
+          </div>
+
+          <div style={{ ...S.hint, borderTop: '1px solid #1e293b', paddingTop: 12 }}>
+            Once configured, reference secrets in config.yml as&nbsp;
+            <code style={{ color: '#94a3b8' }}>vault:secret/path#field</code>, e.g.&nbsp;
+            <code style={{ color: '#94a3b8' }}>vault:prod/postgres#password</code>
+          </div>
+        </>)}
+      </div>
     </div>
   )
 }
@@ -167,4 +316,5 @@ const S: Record<string, React.CSSProperties> = {
   hint: { color: '#64748b', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
   checkRow: { display: 'flex', gap: 12, cursor: 'pointer', alignItems: 'flex-start' },
   btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', padding: '7px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
 }
