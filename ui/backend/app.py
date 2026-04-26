@@ -763,6 +763,26 @@ def api_secrets_put():
     return jsonify({"saved": True})
 
 
+@app.get("/api/secrets/vault/list")
+def api_secrets_vault_list():
+    path = request.args.get("path", "")
+    cfg = _load_raw()
+    vault_cfg = cfg.get("secrets", {}).get("vault", {})
+    if not vault_cfg:
+        return jsonify({"ok": False, "error": "Vault not configured", "keys": []})
+    try:
+        from core.secrets import VaultClient
+        vc = VaultClient(vault_cfg)
+        mount = vault_cfg.get("mount", "secret")
+        resp = vc._client.secrets.kv.v2.list_secrets(path=path or "/", mount_point=mount)
+        keys = resp.get("data", {}).get("keys", [])
+        return jsonify({"ok": True, "keys": keys})
+    except (ImportError, SystemExit):
+        return jsonify({"ok": False, "error": "hvac not installed", "keys": []})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "keys": []})
+
+
 @app.post("/api/secrets/test")
 def api_secrets_test():
     body = request.json or {}
