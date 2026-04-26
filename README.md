@@ -520,14 +520,40 @@ options:
 
 Browse and replay from the `/dlq` page in the web UI.
 
-### Multi-process offset store
+### Scaling with PostgreSQL offset store
 
-Switch from SQLite to PostgreSQL for the offset store to support running multiple daemon instances:
+By default Dremio CDC stores replication offsets in a local SQLite file (`cdc_offsets.db`). This works well for a single daemon process. For production deployments — especially when running multiple daemon instances across different hosts or source types — switch to a shared PostgreSQL offset store.
+
+**When to use PostgreSQL:**
+- Running multiple CDC daemon instances (e.g. one per source type, or active/standby HA)
+- Deploying in containers / Kubernetes where local disk state is ephemeral
+- You want offset visibility and auditability outside the daemon process
+
+**Setup:**
+
+```sql
+-- Run once on your PostgreSQL server
+CREATE USER cdc_user WITH PASSWORD 'cdc_pass';
+CREATE DATABASE cdc_offsets;
+GRANT ALL PRIVILEGES ON DATABASE cdc_offsets TO cdc_user;
+```
+
+The table (`cdc_offsets`) is created automatically on first run — no schema migration needed.
+
+**Config:**
 
 ```yaml
 options:
-  offset_db_path: postgresql://cdc_user:pass@postgres.example.com/cdc_offsets
+  offset_db_path: postgresql://cdc_user:cdc_pass@postgres.example.com:5432/cdc_offsets
 ```
+
+You can also set this from the **Settings** page in the web UI without editing YAML.
+
+**How it works:**
+
+Each `(source_name, table)` pair has its own offset row. All reads and writes use upsert semantics — safe for concurrent access from multiple daemon processes. If two instances try to process the same table, the last writer wins (offsets are monotonically advancing, so this is safe for LSN/binlog-position style offsets).
+
+> **Note:** The Dead Letter Queue (`cdc_dlq.db`) always uses SQLite and is local to each daemon instance. DLQ entries are per-process by design.
 
 ### Prometheus metrics
 
