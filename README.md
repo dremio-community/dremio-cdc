@@ -7,7 +7,7 @@
 
 **Stream database changes directly into Dremio — no Kafka, no Spark, no infrastructure overhead.**
 
-Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres, MySQL, MongoDB, DynamoDB, Oracle, SQL Server (native or via Debezium), and DB2, then writes changes as native Dremio tables via `MERGE INTO` (Mode A) or direct Iceberg writes to Dremio Open Catalog (Mode B). A built-in web UI lets you configure sources, monitor lag, and manage the pipeline without touching YAML.
+Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres, MySQL, MariaDB, MongoDB, DynamoDB, Snowflake, Oracle, SQL Server (native or via Debezium), and DB2, then writes changes as native Dremio tables via `MERGE INTO` (Mode A) or direct Iceberg writes to Dremio Open Catalog (Mode B). A built-in web UI lets you configure sources, monitor lag, and manage the pipeline without touching YAML.
 
 ---
 
@@ -15,11 +15,12 @@ Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres,
 
 ```
 PostgreSQL WAL   ──┐
-MySQL binlog     ──┤                          ┌── Mode A: Dremio REST API
+MySQL binlog     ──┤
+MariaDB binlog   ──┤                          ┌── Mode A: Dremio REST API
 MongoDB Streams  ──┼──► CDC daemon ──────────►│         MERGE INTO / DELETE
 DynamoDB Streams ──┤       │                  └── Mode B: PyIceberg → Dremio Open Catalog
-Debezium HTTP    ──┘  offset store                       (Polaris / Iceberg REST)
-                       (SQLite)
+Snowflake STREAM ──┤  offset store                       (Polaris / Iceberg REST)
+Debezium HTTP    ──┘   (SQLite)
 ```
 
 ### Mode A — Dremio SQL (default)
@@ -46,8 +47,10 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 |--------|-----------|-------|
 | **PostgreSQL** | Logical replication (pgoutput) | `wal_level = logical` required |
 | **MySQL** | Binary log (`binlog_format = ROW`) | MySQL 8.0+ recommended |
+| **MariaDB** | Binary log (`binlog_format = ROW`) | MariaDB 10.2+; same protocol as MySQL |
 | **MongoDB** | Change Streams | Replica set required |
 | **Amazon DynamoDB** | DynamoDB Streams | `NEW_AND_OLD_IMAGES` stream type |
+| **Snowflake** | Snowflake STREAM objects | Native CDC; no Debezium required |
 | **Oracle** | Debezium Server → HTTP adapter | LogMiner; see [Oracle setup](#oracle) |
 | **SQL Server** | Native CDC (LSN-based) | `sp_cdc_enable_db` + `sp_cdc_enable_table` required |
 | **SQL Server** | Debezium Server → HTTP adapter | Alternative; SQL Server Agent + CDC enabled |
@@ -249,6 +252,65 @@ sources:
       server_id:  1
     tables:
       - production.orders
+```
+
+### MariaDB
+
+MariaDB uses the same binlog replication protocol as MySQL. Setup is identical.
+
+```sql
+-- Verify row-based binlog (required)
+SHOW VARIABLES LIKE 'binlog_format';   -- must be ROW
+
+-- Grant CDC permissions
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'cdc_user'@'%';
+GRANT SELECT ON production.* TO 'cdc_user'@'%';
+```
+
+```yaml
+sources:
+  - name: mariadb_prod
+    type: mariadb
+    connection:
+      host:       db.example.com
+      port:       3306
+      database:   production
+      user:       cdc_user
+      password:   secret
+      server_id:  1
+    tables:
+      - production.orders
+```
+
+### Snowflake
+
+Snowflake CDC uses native **STREAM** objects — no Debezium or external tooling required. The daemon creates a stream on each watched table automatically.
+
+```sql
+-- Grant required privileges to the CDC role
+GRANT USAGE  ON WAREHOUSE <wh>     TO ROLE <role>;
+GRANT USAGE  ON DATABASE  <db>     TO ROLE <role>;
+GRANT USAGE  ON SCHEMA    <schema> TO ROLE <role>;
+GRANT SELECT, REFERENCES ON TABLE <table> TO ROLE <role>;
+GRANT CREATE STREAM ON SCHEMA <schema> TO ROLE <role>;
+```
+
+```yaml
+sources:
+  - name: snowflake_prod
+    type: snowflake
+    connection:
+      account:    xy12345.us-east-1
+      user:       cdc_user
+      password:   secret
+      database:   PRODUCTION
+      schema:     PUBLIC
+      warehouse:  COMPUTE_WH
+      role:       CDC_ROLE        # optional
+      poll_interval: 30           # seconds between stream checks
+    tables:
+      - PUBLIC.ORDERS
+      - PUBLIC.CUSTOMERS
 ```
 
 ### MongoDB
@@ -680,11 +742,12 @@ dremio-cdc/
 │   ├── base.py                 # CDCSource abstract base class
 │   ├── postgres.py             # pgoutput logical replication
 │   ├── mysql.py                # MySQL binlog via python-mysql-replication
+│   ├── mariadb.py              # MariaDB binlog (subclass of MySQLSource)
 │   ├── mongodb.py              # MongoDB Change Streams
 │   ├── dynamodb.py             # DynamoDB Streams via boto3
 │   ├── debezium.py             # HTTP adapter for Debezium Server (Oracle, SQL Server, DB2)
-│   ├── sqlserver.py            # SQL Server CDC via Debezium
-│   ├── snowflake_src.py        # Snowflake polling
+│   ├── sqlserver.py            # SQL Server CDC via pyodbc
+│   ├── snowflake_src.py        # Snowflake native STREAM objects
 │   └── cockroachdb.py          # CockroachDB CHANGEFEED (experimental)
 │
 ├── ui/
@@ -698,7 +761,7 @@ dremio-cdc/
 │   └── db2.properties
 │
 └── tests/
-    ├── test_e2e.py             # Integration test suite (110+ tests)
+    ├── test_e2e.py             # Integration test suite (135+ tests)
     └── fixtures/               # SQL seed files, Docker init scripts
 ```
 
@@ -717,7 +780,12 @@ class MySource(CDCSource):
     def close(self): ...
 ```
 
-Register in `core/engine.py` in the `_SOURCE_MAP` dict.
+Register in `core/engine.py` inside `_load_sources()`:
+
+```python
+from sources.my_source import MySource
+register_source("mysource", MySource)
+```
 
 ---
 
