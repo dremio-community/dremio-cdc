@@ -156,7 +156,8 @@
       <tr><td>MySQL</td><td>Binlog streaming</td><td>REPLICATION SLAVE privilege</td></tr>
       <tr><td>MongoDB</td><td>Change streams</td><td>Standard connection string</td></tr>
       <tr><td>DynamoDB</td><td>DynamoDB Streams</td><td>IAM role / static credentials</td></tr>
-      <tr><td>SQL Server</td><td>Native CDC (<code>sys.sp_cdc_enable_db</code>)</td><td>sysadmin to enable CDC + replication user</td></tr>
+      <tr><td>SQL Server</td><td>Native CDC (LSN-based)</td><td><code>sp_cdc_enable_db</code> + <code>sp_cdc_enable_table</code> required</td></tr>
+      <tr><td>SQL Server</td><td>Debezium Server → HTTP adapter</td><td>Alternative; SQL Server Agent + CDC enabled</td></tr>
       <tr><td>Oracle</td><td>Debezium HTTP (LogMiner)</td><td>CDC-enabled DB + Debezium server</td></tr>
       <tr><td>DB2</td><td>Debezium HTTP</td><td>CDC-enabled DB + Debezium server</td></tr>
       <tr><td>Snowflake</td><td>Change tracking streams</td><td>Standard credentials</td></tr>
