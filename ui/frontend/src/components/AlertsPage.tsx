@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Bell, BellOff, Loader, Mail, Plus, Save, Trash2, Webhook, X } from 'lucide-react'
 import { getAlerts, saveAlerts, AlertConfig, AlertChannel, AlertRecord } from '../api/client'
+import SecretFieldInput from './SecretFieldInput'
 
 const EMPTY_CONFIG: AlertConfig = {
   enabled: true,
@@ -205,18 +206,24 @@ function ChannelForm({ type, onAdd, onCancel }: {
 
       {type === 'slack' && (
         <Field label="Webhook URL" hint="https://hooks.slack.com/services/...">
-          <input style={S.input} value={(f.webhook_url as string) ?? ''}
-            onChange={e => set('webhook_url', e.target.value)}
-            placeholder="https://hooks.slack.com/services/..." />
+          <SecretFieldInput
+            value={(f.webhook_url as string) ?? ''}
+            onChange={v => set('webhook_url', v)}
+            placeholder="https://hooks.slack.com/services/..."
+            isPassword={false}
+          />
         </Field>
       )}
 
       {type === 'webhook' && (
         <div style={S.grid2}>
           <Field label="URL">
-            <input style={S.input} value={(f.url as string) ?? ''}
-              onChange={e => set('url', e.target.value)}
-              placeholder="https://my-endpoint.example.com/hook" />
+            <SecretFieldInput
+              value={(f.url as string) ?? ''}
+              onChange={v => set('url', v)}
+              placeholder="https://my-endpoint.example.com/hook"
+              isPassword={false}
+            />
           </Field>
           <Field label="HTTP method">
             <select style={S.input} value={(f.method as string) ?? 'post'}
@@ -245,8 +252,9 @@ function ChannelForm({ type, onAdd, onCancel }: {
               onChange={e => set('smtp_user', e.target.value)} placeholder="me@company.com" /></Field>
           </div>
           <div style={S.grid2}>
-            <Field label="SMTP password"><input style={S.input} type="password" value={(f.smtp_password as string) ?? ''}
-              onChange={e => set('smtp_password', e.target.value)} /></Field>
+            <Field label="SMTP password">
+              <SecretFieldInput value={(f.smtp_password as string) ?? ''} onChange={v => set('smtp_password', v)} isPassword />
+            </Field>
             <Field label="">
               <label style={S.checkRow}>
                 <input type="checkbox" checked={!!f.smtp_tls}
