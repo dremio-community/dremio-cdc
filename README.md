@@ -3,6 +3,8 @@
 [![Docker Hub](https://img.shields.io/docker/v/mshainman/dremio-cdc?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/mshainman/dremio-cdc)
 [![GitHub](https://img.shields.io/badge/GitHub-dremio--community%2Fdremio--cdc-blue?logo=github)](https://github.com/dremio-community/dremio-cdc)
 
+📖 **[Visual User Guide](https://htmlpreview.github.io/?https://github.com/dremio-community/dremio-cdc/blob/main/docs/VISUAL_GUIDE.html)** — step-by-step walkthrough with real screenshots
+
 **Stream database changes directly into Dremio — no Kafka, no Spark, no infrastructure overhead.**
 
 Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres, MySQL, MongoDB, DynamoDB, Oracle, SQL Server (native or via Debezium), and DB2, then writes changes as native Dremio tables via `MERGE INTO` (Mode A) or direct Iceberg writes to Dremio Open Catalog (Mode B). A built-in web UI lets you configure sources, monitor lag, and manage the pipeline without touching YAML.
