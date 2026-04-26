@@ -356,6 +356,165 @@ class TestConfigLoad:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Secrets resolution
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSecretsEnvVar:
+
+    def test_exact_substitution(self, monkeypatch):
+        monkeypatch.setenv("DB_PASS", "s3cr3t")
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        assert r.resolve("${DB_PASS}") == "s3cr3t"
+
+    def test_inline_substitution(self, monkeypatch):
+        monkeypatch.setenv("DB_HOST", "myhost")
+        monkeypatch.setenv("DB_NAME", "mydb")
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        assert r.resolve("jdbc:///${DB_HOST}/${DB_NAME}") == "jdbc:///myhost/mydb"
+
+    def test_missing_env_var_left_as_is(self):
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        result = r.resolve("${DOES_NOT_EXIST_XYZ}")
+        assert result == "${DOES_NOT_EXIST_XYZ}"
+
+    def test_non_string_passthrough(self):
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        assert r.resolve(42) == 42
+        assert r.resolve(True) is True
+        assert r.resolve(None) is None
+
+    def test_walk_dict(self, monkeypatch):
+        monkeypatch.setenv("MY_PWD", "hunter2")
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        result = r.walk({"connection": {"password": "${MY_PWD}", "port": 5432}})
+        assert result["connection"]["password"] == "hunter2"
+        assert result["connection"]["port"] == 5432
+
+    def test_walk_nested_list(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK", "https://hooks.example.com/abc")
+        from core.secrets import SecretsResolver
+        r = SecretsResolver()
+        result = r.walk({"alerts": {"channels": [{"webhook_url": "${WEBHOOK}"}]}})
+        assert result["alerts"]["channels"][0]["webhook_url"] == "https://hooks.example.com/abc"
+
+    def test_config_load_expands_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("TEST_PG_PASS", "pgpass123")
+        cfg_file = tmp_path / "cfg.yml"
+        cfg_file.write_text(
+            "sources:\n"
+            "  - name: pg\n"
+            "    type: postgres\n"
+            "    connection:\n"
+            "      password: ${TEST_PG_PASS}\n"
+            "dremio:\n"
+            "  host: localhost\n"
+        )
+        from core.config import load_config
+        cfg = load_config(str(cfg_file))
+        assert cfg["sources"][0]["connection"]["password"] == "pgpass123"
+
+    def test_config_load_expands_alerts(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SLACK_URL", "https://hooks.slack.com/xyz")
+        cfg_file = tmp_path / "cfg.yml"
+        cfg_file.write_text(
+            "sources: []\n"
+            "dremio:\n"
+            "  host: localhost\n"
+            "alerts:\n"
+            "  channels:\n"
+            "    - type: slack\n"
+            "      webhook_url: ${SLACK_URL}\n"
+        )
+        from core.config import load_config
+        cfg = load_config(str(cfg_file))
+        assert cfg["alerts"]["channels"][0]["webhook_url"] == "https://hooks.slack.com/xyz"
+
+
+class TestSecretsVault:
+
+    def _make_mock_vault(self, secrets: dict):
+        """Return a VaultClient-compatible mock."""
+        from unittest.mock import MagicMock
+        mock = MagicMock()
+        mock.get.side_effect = lambda path, field: secrets[f"{path}#{field}"]
+        return mock
+
+    def test_vault_reference_resolved(self):
+        from core.secrets import SecretsResolver
+        vault = self._make_mock_vault({"infra/db#password": "vaultpass"})
+        r = SecretsResolver(vault_client=vault)
+        assert r.resolve("vault:infra/db#password") == "vaultpass"
+        vault.get.assert_called_once_with("infra/db", "password")
+
+    def test_vault_reference_missing_field_raises(self):
+        from core.secrets import SecretsResolver
+        from unittest.mock import MagicMock
+        vault = MagicMock()
+        vault.get.side_effect = KeyError("no_field")
+        r = SecretsResolver(vault_client=vault)
+        import pytest
+        with pytest.raises(KeyError):
+            r.resolve("vault:infra/db#no_field")
+
+    def test_vault_reference_no_client_raises(self):
+        from core.secrets import SecretsResolver
+        import pytest
+        r = SecretsResolver()
+        with pytest.raises(ValueError, match="no Vault config"):
+            r.resolve("vault:infra/db#password")
+
+    def test_vault_invalid_reference_raises(self):
+        from core.secrets import SecretsResolver
+        from unittest.mock import MagicMock
+        r = SecretsResolver(vault_client=MagicMock())
+        import pytest
+        with pytest.raises(ValueError, match="Invalid vault reference"):
+            r.resolve("vault:infra/db_missing_hash")
+
+    def test_walk_with_vault(self):
+        from core.secrets import SecretsResolver
+        vault = self._make_mock_vault({
+            "prod/dremio#pat": "dremio-secret-token",
+            "prod/pg#password": "pgvaultpass",
+        })
+        r = SecretsResolver(vault_client=vault)
+        result = r.walk({
+            "dremio": {"pat": "vault:prod/dremio#pat"},
+            "sources": [{"connection": {"password": "vault:prod/pg#password"}}],
+        })
+        assert result["dremio"]["pat"] == "dremio-secret-token"
+        assert result["sources"][0]["connection"]["password"] == "pgvaultpass"
+
+    def test_vault_client_init_token_auth(self):
+        """VaultClient authenticates with token and caches secrets."""
+        import pytest
+        pytest.importorskip("hvac")
+        from unittest.mock import MagicMock, patch
+        mock_hvac = MagicMock()
+        mock_instance = MagicMock()
+        mock_instance.is_authenticated.return_value = True
+        mock_hvac.Client.return_value = mock_instance
+        mock_instance.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {"data": {"password": "toplevel"}}
+        }
+        with patch.dict("sys.modules", {"hvac": mock_hvac}):
+            from importlib import reload
+            import core.secrets as sm
+            reload(sm)
+            vc = sm.VaultClient({"url": "http://vault:8200", "token": "mytoken", "auth_method": "token"})
+            val = vc.get("prod/db", "password")
+            assert val == "toplevel"
+            # second call hits cache, not Vault
+            val2 = vc.get("prod/db", "password")
+            assert mock_instance.secrets.kv.v2.read_secret_version.call_count == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 8. Offset store
 # ══════════════════════════════════════════════════════════════════════════════
 
