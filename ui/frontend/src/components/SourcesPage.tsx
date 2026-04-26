@@ -23,7 +23,7 @@ const MASK_LABELS: Record<string, string> = {
   mask_name:   'Name   (J***)',
 }
 
-const SOURCE_TYPES = ['postgres', 'mysql', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium'] as const
+const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium'] as const
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([])
@@ -601,6 +601,14 @@ function connFields(type: string): FieldDef[] {
       { key: 'password',  label: 'Password',  secret: true },
       { key: 'server_id', label: 'Server ID', default: '1001' },
     ]
+    case 'mariadb': return [
+      { key: 'host',      label: 'Host',      default: 'localhost' },
+      { key: 'port',      label: 'Port',      default: '3306' },
+      { key: 'database',  label: 'Database',  placeholder: 'mydb' },
+      { key: 'user',      label: 'User',      placeholder: 'cdc_user' },
+      { key: 'password',  label: 'Password',  secret: true },
+      { key: 'server_id', label: 'Server ID', default: '1001' },
+    ]
     case 'mongodb': return [
       { key: 'uri', label: 'Connection URI', placeholder: 'mongodb://user:pass@localhost:27017' },
     ]
@@ -677,6 +685,7 @@ function typeColor(type: string): React.CSSProperties {
   const map: Record<string, React.CSSProperties> = {
     postgres:    { background: '#1e3a5f', color: '#93c5fd' },
     mysql:       { background: '#1a2e1a', color: '#86efac' },
+    mariadb:     { background: '#1a2a1f', color: '#6ee7b7' },
     mongodb:     { background: '#1f2937', color: '#6ee7b7' },
     dynamodb:    { background: '#2d1f3d', color: '#c4b5fd' },
     sqlserver:   { background: '#1f1a2e', color: '#a78bfa' },

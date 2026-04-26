@@ -73,6 +73,7 @@ def register_source(type_name: str, cls: Type[CDCSource]):
 def _load_sources():
     from sources.postgres    import PostgresSource
     from sources.mysql       import MySQLSource
+    from sources.mariadb     import MariaDBSource
     from sources.mongodb     import MongoDBSource
     from sources.dynamodb    import DynamoDBSource
     from sources.debezium    import DebeziumSource
@@ -82,6 +83,7 @@ def _load_sources():
 
     register_source("postgres",    PostgresSource)
     register_source("mysql",       MySQLSource)
+    register_source("mariadb",     MariaDBSource)
     register_source("mongodb",     MongoDBSource)
     register_source("dynamodb",    DynamoDBSource)
     register_source("debezium",    DebeziumSource)

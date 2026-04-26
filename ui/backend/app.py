@@ -370,7 +370,7 @@ def _get_source_schema(source, src_type: str, cfg: dict, tables: List[str]) -> D
                     schema.setdefault(tbl, []).append(col)
             return schema
 
-        if src_type == "mysql":
+        if src_type in ("mysql", "mariadb"):
             conn_cfg = cfg.get("connection", {})
             import pymysql
             conn = pymysql.connect(
@@ -441,7 +441,7 @@ def _get_typed_schema(source, src_type: str, cfg: dict, tables: List[str]) -> Di
                     schema.setdefault(tbl, []).append({"name": col, "raw_type": udt, "dremio_type": _dremio_type(udt)})
             return schema
 
-        if src_type == "mysql":
+        if src_type in ("mysql", "mariadb"):
             conn_cfg = cfg.get("connection", {})
             import pymysql
             conn = pymysql.connect(
@@ -585,7 +585,7 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
                 """)
                 return [r[0] for r in cur.fetchall()]
 
-        if src_type == "mysql":
+        if src_type in ("mysql", "mariadb"):
             db = cfg.get("connection", {}).get("database", "")
             import pymysql
             conn = pymysql.connect(
