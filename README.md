@@ -555,6 +555,74 @@ Each `(source_name, table)` pair has its own offset row. All reads and writes us
 
 > **Note:** The Dead Letter Queue (`cdc_dlq.db`) always uses SQLite and is local to each daemon instance. DLQ entries are per-process by design.
 
+### Secrets management
+
+Dremio CDC supports two secrets backends so credentials never need to live in plaintext YAML.
+
+#### Environment variables
+
+Use `${ENV_VAR}` anywhere in the config — including inline within a string:
+
+```yaml
+sources:
+  - name: prod_pg
+    type: postgres
+    connection:
+      host: ${DB_HOST}
+      password: ${DB_PASSWORD}
+
+dremio:
+  pat: ${DREMIO_PAT}
+
+alerts:
+  channels:
+    - type: slack
+      webhook_url: ${SLACK_WEBHOOK_URL}
+    - type: email
+      smtp_password: ${SMTP_PASSWORD}
+```
+
+Inline substitution also works: `jdbc://${DB_HOST}:${DB_PORT}/mydb`
+
+If an env var is not set, the literal `${VAR}` is left in place (no silent failure).
+
+#### HashiCorp Vault (KV v2)
+
+Use `vault:path#field` references anywhere in the config:
+
+```yaml
+sources:
+  - name: prod_pg
+    type: postgres
+    connection:
+      password: vault:secret/prod/postgres#password
+
+dremio:
+  pat: vault:secret/prod/dremio#pat
+```
+
+Configure the Vault connection under a top-level `secrets:` block:
+
+```yaml
+secrets:
+  vault:
+    url: https://vault.example.com       # or set VAULT_ADDR env var
+    auth_method: token                   # token (default) or approle
+    token: ${VAULT_TOKEN}                # for token auth
+
+    # AppRole auth (recommended for production):
+    # auth_method: approle
+    # role_id: ${VAULT_ROLE_ID}
+    # secret_id: ${VAULT_SECRET_ID}
+
+    mount: secret                        # KV v2 mount point (default: secret)
+    namespace: ""                        # Vault Enterprise namespace (optional)
+```
+
+Install the Vault client library: `pip install hvac`
+
+Vault secrets are cached per-path within a single daemon run to minimise Vault API calls.
+
 ### Prometheus metrics
 
 Expose metrics for Prometheus scraping:
