@@ -743,6 +743,42 @@ def api_settings_put():
     return jsonify({"saved": True})
 
 
+# ── API: secrets ──────────────────────────────────────────────────────────────
+
+@app.get("/api/secrets")
+def api_secrets_get():
+    cfg = _load_raw()
+    return jsonify(cfg.get("secrets", {}))
+
+
+@app.put("/api/secrets")
+def api_secrets_put():
+    body = request.json or {}
+    cfg = _load_raw()
+    if body:
+        cfg["secrets"] = body
+    elif "secrets" in cfg:
+        del cfg["secrets"]
+    _save_raw(cfg)
+    return jsonify({"saved": True})
+
+
+@app.post("/api/secrets/test")
+def api_secrets_test():
+    body = request.json or {}
+    vault_cfg = body.get("vault", {})
+    if not vault_cfg:
+        return jsonify({"ok": False, "error": "No Vault configuration provided"})
+    try:
+        from core.secrets import VaultClient
+        VaultClient(vault_cfg)
+        return jsonify({"ok": True})
+    except (ImportError, SystemExit):
+        return jsonify({"ok": False, "error": "hvac library not installed — run: pip install hvac"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ── API: alerts ──────────────────────────────────────────────────────────────
 
 @app.get("/api/alerts")
