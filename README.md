@@ -5,7 +5,7 @@
 
 **Stream database changes directly into Dremio — no Kafka, no Spark, no infrastructure overhead.**
 
-Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres, MySQL, MongoDB, DynamoDB, Oracle, SQL Server, and DB2, then writes changes as native Dremio tables via `MERGE INTO` (Mode A) or direct Iceberg writes to Dremio Open Catalog (Mode B). A built-in web UI lets you configure sources, monitor lag, and manage the pipeline without touching YAML.
+Dremio CDC is a lightweight Change Data Capture daemon that reads from Postgres, MySQL, MongoDB, DynamoDB, Oracle, SQL Server (native or via Debezium), and DB2, then writes changes as native Dremio tables via `MERGE INTO` (Mode A) or direct Iceberg writes to Dremio Open Catalog (Mode B). A built-in web UI lets you configure sources, monitor lag, and manage the pipeline without touching YAML.
 
 ---
 
@@ -47,7 +47,8 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 | **MongoDB** | Change Streams | Replica set required |
 | **Amazon DynamoDB** | DynamoDB Streams | `NEW_AND_OLD_IMAGES` stream type |
 | **Oracle** | Debezium Server → HTTP adapter | LogMiner; see [Oracle setup](#oracle) |
-| **SQL Server** | Debezium Server → HTTP adapter | SQL Server Agent + CDC enabled |
+| **SQL Server** | Native CDC (LSN-based) | `sp_cdc_enable_db` + `sp_cdc_enable_table` required |
+| **SQL Server** | Debezium Server → HTTP adapter | Alternative; SQL Server Agent + CDC enabled |
 | **DB2** | Debezium Server → HTTP adapter | ASN Capture required |
 
 ---
