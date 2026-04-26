@@ -36,3 +36,6 @@ oracledb>=2.0
 # UI (web interface)
 flask>=3.0
 flask-cors>=4.0
+
+# Secrets management (optional — only needed for HashiCorp Vault integration)
+hvac>=2.0
