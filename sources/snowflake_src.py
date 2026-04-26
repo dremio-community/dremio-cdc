@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 
 from core.event import ChangeEvent, ColumnSchema, Operation
@@ -53,6 +54,7 @@ class SnowflakeSource(CDCSource):
 
     def get_schema(self, table: str) -> List[ColumnSchema]:
         schema_name, table_name = self._split(table)
+        pks = set(p.upper() for p in self._get_pks(table))
         cur = self._conn.cursor()
         cur.execute(f'SHOW COLUMNS IN TABLE "{schema_name}"."{table_name}"')
         cols = []
@@ -62,7 +64,7 @@ class SnowflakeSource(CDCSource):
                 dt = json.loads(row[3]).get("type", "TEXT")
             except Exception:
                 dt = "TEXT"
-            cols.append(ColumnSchema(col_name, dt))
+            cols.append(ColumnSchema(col_name, dt, primary_key=col_name.upper() in pks))
         cur.close()
         return cols
 
@@ -70,7 +72,6 @@ class SnowflakeSource(CDCSource):
         schema = self.get_schema(table)
         col_names = [c.name for c in schema]
         schema_name, table_name = self._split(table)
-        pks = self._get_pks(table)
 
         cur = self._conn.cursor()
         cur.execute(f'SELECT {_cols(col_names)} FROM "{schema_name}"."{table_name}"')
@@ -84,24 +85,25 @@ class SnowflakeSource(CDCSource):
                     source_name=self.name,
                     source_table=table,
                     schema=schema,
-                    primary_keys=pks,
                     after=dict(zip(col_names, row)),
                     before=None,
+                    timestamp=datetime.now(timezone.utc),
+                    offset=None,
                 )
         cur.close()
 
     def stream(self, table: str, offset: Optional[Any]) -> Generator[ChangeEvent, None, None]:
         schema = self.get_schema(table)
         col_names = [c.name for c in schema]
-        pks = self._get_pks(table)
-        schema_name, _ = self._split(table)
         stream_fqn = self._ensure_stream(table)
+        # SYSTEM$STREAM_HAS_DATA requires the quoted identifier form: "SCHEMA"."stream_name"
+        stream_has_data_arg = stream_fqn  # already "SCHEMA"."stream_name"
         poll_interval = int(self._conn_cfg.get("poll_interval", 30))
 
         while True:
             # Check whether the stream has data before starting a transaction
             cur = self._conn.cursor()
-            cur.execute(f"SELECT SYSTEM$STREAM_HAS_DATA('{stream_fqn}')")
+            cur.execute(f'SELECT SYSTEM$STREAM_HAS_DATA(\'{stream_has_data_arg}\')')
             has_data = cur.fetchone()[0]
             cur.close()
 
@@ -137,9 +139,10 @@ class SnowflakeSource(CDCSource):
                             source_name=self.name,
                             source_table=table,
                             schema=schema,
-                            primary_keys=pks,
                             after=values if op != Operation.DELETE else None,
                             before=values if op == Operation.DELETE else None,
+                            timestamp=datetime.now(timezone.utc),
+                            offset=None,
                         )
                 except Exception as exc:
                     try:

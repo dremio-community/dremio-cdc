@@ -1039,6 +1039,229 @@ MONGO_CFG = {
 }
 
 
+SNOWFLAKE_CFG = {
+    "account":   "ezuabpp-nyb01234",
+    "user":      "mark",
+    "password":  "Cheyenne7788&&**",
+    "database":  "CDC_TEST",
+    "schema":    "PUBLIC",
+    "warehouse": "COMPUTE_WH",
+    "poll_interval": 2,
+}
+
+
+@pytest.mark.snowflake
+class TestSnowflakeSource:
+    """Live tests against the CDC_TEST Snowflake trial account."""
+
+    def setup_method(self):
+        from sources.snowflake_src import SnowflakeSource
+        self.src = SnowflakeSource("sf_test", SNOWFLAKE_CFG)
+        self.src.connect()
+        # Ensure test tables have seed data
+        cur = self.src._conn.cursor()
+        cur.execute("USE WAREHOUSE COMPUTE_WH")
+        cur.execute("""
+            MERGE INTO CDC_TEST.PUBLIC.CUSTOMERS AS t
+            USING (SELECT 1 AS id, 'Alice' AS name, 'alice@example.com' AS email, 'WEST' AS region
+                   UNION ALL SELECT 2, 'Bob', 'bob@example.com', 'EAST'
+                   UNION ALL SELECT 3, 'Carol', 'carol@example.com', 'NORTH') AS s
+            ON t.id = s.id
+            WHEN NOT MATCHED THEN INSERT (id, name, email, region)
+                VALUES (s.id, s.name, s.email, s.region)
+        """)
+        cur.close()
+
+    def teardown_method(self):
+        self.src.close()
+
+    def test_connection(self):
+        cur = self.src._conn.cursor()
+        cur.execute("SELECT CURRENT_USER()")
+        assert cur.fetchone()[0] == "MARK"
+        cur.close()
+
+    def test_get_schema_customers(self):
+        schema = self.src.get_schema("PUBLIC.CUSTOMERS")
+        names = [c.name for c in schema]
+        assert "ID" in names or "id" in [n.lower() for n in names]
+        assert "NAME" in names or "name" in [n.lower() for n in names]
+        assert "EMAIL" in names or "email" in [n.lower() for n in names]
+
+    def test_get_pks_customers(self):
+        pks = self.src._get_pks("PUBLIC.CUSTOMERS")
+        assert len(pks) == 1
+        assert pks[0].upper() == "ID"
+
+    def test_snapshot_customers(self):
+        from core.event import Operation
+        events = list(self.src.snapshot("PUBLIC.CUSTOMERS"))
+        assert len(events) >= 3
+        assert all(e.op == Operation.SNAPSHOT for e in events)
+        assert all("ID" in {k.upper() for k in e.after} for e in events)
+
+    def test_snapshot_orders(self):
+        events = list(self.src.snapshot("PUBLIC.ORDERS"))
+        assert len(events) >= 3
+        ids = [e.after.get("ORDER_ID") or e.after.get("order_id") for e in events]
+        assert all(i is not None for i in ids)
+
+    def test_snapshot_event_structure(self):
+        from core.event import Operation
+        events = list(self.src.snapshot("PUBLIC.CUSTOMERS"))
+        ev = events[0]
+        assert ev.op == Operation.SNAPSHOT
+        assert ev.source_name == "sf_test"
+        assert ev.source_table == "PUBLIC.CUSTOMERS"
+        assert ev.before is None
+        assert isinstance(ev.after, dict)
+        assert len(ev.schema) >= 4
+
+    def test_stream_auto_created(self):
+        """_ensure_stream should create the STREAM object if it doesn't exist."""
+        stream_fqn = self.src._ensure_stream("PUBLIC.CUSTOMERS")
+        assert stream_fqn is not None
+        # Verify the stream exists in Snowflake
+        cur = self.src._conn.cursor()
+        cur.execute("SHOW STREAMS IN SCHEMA CDC_TEST.PUBLIC")
+        stream_names = [r[1].upper() for r in cur.fetchall()]
+        cur.close()
+        assert "DREMIO_CDC_CUSTOMERS" in stream_names
+
+    def test_stream_has_data_check(self):
+        """SYSTEM$STREAM_HAS_DATA should return a boolean-like result."""
+        stream_fqn = self.src._ensure_stream("PUBLIC.CUSTOMERS")
+        cur = self.src._conn.cursor()
+        cur.execute(f"SELECT SYSTEM$STREAM_HAS_DATA('{stream_fqn}')")
+        result = cur.fetchone()[0]
+        cur.close()
+        assert result in (True, False)
+
+    def _dml_conn(self):
+        """Open a separate Snowflake connection for DML — stream() holds the main one."""
+        import snowflake.connector
+        return snowflake.connector.connect(
+            account=SNOWFLAKE_CFG["account"],
+            user=SNOWFLAKE_CFG["user"],
+            password=SNOWFLAKE_CFG["password"],
+            database=SNOWFLAKE_CFG["database"],
+            schema=SNOWFLAKE_CFG["schema"],
+            warehouse=SNOWFLAKE_CFG["warehouse"],
+        )
+
+    def test_streaming_insert(self):
+        """Insert a row and verify it appears as a CDC INSERT event."""
+        import threading
+        from core.event import Operation
+
+        self.src._ensure_stream("PUBLIC.CUSTOMERS")
+        captured = []
+
+        def _stream():
+            for ev in self.src.stream("PUBLIC.CUSTOMERS", None):
+                captured.append(ev)
+                if len(captured) >= 1:
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(2)
+
+        uid = uuid.uuid4().hex[:8]
+        new_id = 9000 + int(uid[:4], 16) % 1000
+        conn = self._dml_conn()
+        cur = conn.cursor()
+        cur.execute(f"INSERT INTO CDC_TEST.PUBLIC.CUSTOMERS (id, name, email, region) VALUES ({new_id}, 'Test_{uid}', 'test_{uid}@sf.com', 'TEST')")
+        cur.close()
+        conn.close()
+
+        t.join(timeout=30)
+        inserts = [e for e in captured if e.op == Operation.INSERT]
+        assert len(inserts) >= 1, "Expected at least one INSERT event from Snowflake stream"
+
+    def test_streaming_update(self):
+        """Update a row and verify it appears as an UPDATE event."""
+        import threading
+        from core.event import Operation
+
+        self.src._ensure_stream("PUBLIC.ORDERS")
+        captured = []
+
+        def _stream():
+            for ev in self.src.stream("PUBLIC.ORDERS", None):
+                captured.append(ev)
+                if len(captured) >= 1:
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(2)
+
+        conn = self._dml_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE CDC_TEST.PUBLIC.ORDERS SET status='updated' WHERE order_id=101")
+        cur.close()
+        conn.close()
+
+        t.join(timeout=30)
+        updates = [e for e in captured if e.op == Operation.UPDATE]
+        assert len(updates) >= 1, "Expected at least one UPDATE event from Snowflake stream"
+
+    def test_streaming_delete(self):
+        """Delete a pre-existing seed row and verify the DELETE event is captured.
+
+        Snowflake streams compute NET changes: an INSERT+DELETE of the same row within
+        a single stream period cancels to zero (no events). To reliably capture a DELETE,
+        the deleted row must have existed before the stream's current offset — i.e. it was
+        not inserted in the same stream period. Using a seed row satisfies this condition.
+        """
+        import threading
+        from core.event import Operation
+
+        # Reset stream to clean state so the seed rows are "pre-existing" from the stream's view
+        reset_cur = self.src._conn.cursor()
+        reset_cur.execute('DROP STREAM IF EXISTS "PUBLIC"."dremio_cdc_CUSTOMERS"')
+        reset_cur.close()
+        self.src._ensure_stream("PUBLIC.CUSTOMERS")
+        time.sleep(3)
+
+        captured = []
+
+        def _stream():
+            for ev in self.src.stream("PUBLIC.CUSTOMERS", None):
+                captured.append(ev)
+                if any(e.op == Operation.DELETE for e in captured) or len(captured) >= 10:
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(2)  # Let the thread start and complete its first has_data poll
+
+        # Delete seed row 3 (Carlos) — existed before this stream was created
+        conn = self._dml_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM CDC_TEST.PUBLIC.CUSTOMERS WHERE id=3")
+        cur.close()
+        conn.close()
+
+        t.join(timeout=30)
+
+        # Restore seed row so subsequent test runs find it (Snowflake MERGE for upsert)
+        conn = self._dml_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            MERGE INTO CDC_TEST.PUBLIC.CUSTOMERS AS t
+            USING (SELECT 3 AS id, 'Carlos' AS name, 'carlos@example.com' AS email, 'WEST' AS region) AS s
+            ON t.id = s.id
+            WHEN NOT MATCHED THEN INSERT (id, name, email, region) VALUES (s.id, s.name, s.email, s.region)
+        """)
+        cur.close()
+        conn.close()
+
+        deletes = [e for e in captured if e.op == Operation.DELETE]
+        assert len(deletes) >= 1, f"Expected DELETE event, got: {[e.op for e in captured]}"
+
+
 @pytest.mark.integration
 class TestMongoDBSource:
 
