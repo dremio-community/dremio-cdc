@@ -125,12 +125,10 @@ export default function TargetPage() {
         <Field label="Personal Access Token (PAT) — overrides user/password">
           <SecretFieldInput value={cfg.dremio.pat ?? ''} onChange={v => updateDremio('pat', v)} placeholder="For Dremio Cloud or Enterprise" isPassword />
         </Field>
-        {cfg.dremio.pat && (
-          <Field label="Project ID (Dremio Cloud only)">
-            <input style={S.input} value={(cfg.dremio as any).project_id ?? ''} onChange={e => updateDremio('project_id' as any, e.target.value)} placeholder="e.g. 957704f5-4495-42ad-94de-671bf7790610" />
-            <div style={S.hint}>Required for Mode A with Dremio Cloud. Find it in your Dremio Cloud project URL.</div>
-          </Field>
-        )}
+        <Field label="Project ID (Dremio Cloud only)">
+          <input style={S.input} value={(cfg.dremio as any).project_id ?? ''} onChange={e => updateDremio('project_id' as any, e.target.value)} placeholder="e.g. 957704f5-4495-42ad-94de-671bf7790610" />
+          <div style={S.hint}>Required for Mode A with Dremio Cloud. Find it in your Dremio Cloud project URL.</div>
+        </Field>
         {cfg.sink_mode === 'dremio' && (
           <Field label="Target namespace">
             <div ref={nsRef} style={{ position: 'relative' }}>
