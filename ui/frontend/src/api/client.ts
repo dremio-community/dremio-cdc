@@ -53,6 +53,11 @@ export const getMappings = () => req<MappingsResult>('GET', '/mappings')
 export const getAlerts    = () => req<AlertsResponse>('GET', '/alerts')
 export const saveAlerts   = (cfg: AlertConfig) => req('PUT', '/alerts', cfg)
 
+// Secrets
+export const getSecrets  = () => req<SecretsConfig>('GET', '/secrets')
+export const saveSecrets = (s: SecretsConfig) => req('PUT', '/secrets', s)
+export const testVault   = (vault: VaultConfig) => req<TestResult>('POST', '/secrets/test', { vault })
+
 // Dead Letter Queue
 export const getDLQ          = () => req<DLQResponse>('GET', '/dlq')
 export const retryDLQEntry   = (id: number) => req('POST', `/dlq/${id}/retry`)
@@ -235,6 +240,20 @@ export interface AlertRecord {
 export interface AlertsResponse {
   config: AlertConfig
   recent: AlertRecord[]
+}
+
+export interface VaultConfig {
+  url?: string
+  auth_method?: 'token' | 'approle'
+  token?: string
+  role_id?: string
+  secret_id?: string
+  namespace?: string
+  mount?: string
+}
+
+export interface SecretsConfig {
+  vault?: VaultConfig
 }
 
 export interface DLQEntry {
