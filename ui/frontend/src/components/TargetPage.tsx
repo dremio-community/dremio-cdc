@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, ChevronDown, CheckCircle, Cloud, Database, Loader, Save, Zap } from 'lucide-react'
 import { getTarget, saveTarget, testTarget, getNamespaces, TargetConfig, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig } from '../api/client'
+import SecretFieldInput from './SecretFieldInput'
 
 export default function TargetPage() {
   const [cfg, setCfg] = useState<TargetConfig>({
@@ -118,11 +119,11 @@ export default function TargetPage() {
             <input style={S.input} value={cfg.dremio.user ?? ''} onChange={e => updateDremio('user', e.target.value)} placeholder="admin" />
           </Field>
           <Field label="Password">
-            <input style={S.input} type="password" value={cfg.dremio.password ?? ''} onChange={e => updateDremio('password', e.target.value)} />
+            <SecretFieldInput value={cfg.dremio.password ?? ''} onChange={v => updateDremio('password', v)} isPassword />
           </Field>
         </div>
         <Field label="Personal Access Token (PAT) — overrides user/password">
-          <input style={S.input} value={cfg.dremio.pat ?? ''} onChange={e => updateDremio('pat', e.target.value)} placeholder="For Dremio Cloud or Enterprise" />
+          <SecretFieldInput value={cfg.dremio.pat ?? ''} onChange={v => updateDremio('pat', v)} placeholder="For Dremio Cloud or Enterprise" isPassword />
         </Field>
         {cfg.dremio.pat && (
           <Field label="Project ID (Dremio Cloud only)">
@@ -209,13 +210,7 @@ export default function TargetPage() {
               />
             </Field>
             <Field label="API token (optional)">
-              <input
-                style={S.input}
-                type="password"
-                value={cfg.transform_studio?.token ?? ''}
-                onChange={e => updateTS('token', e.target.value)}
-                placeholder="Bearer token for authentication"
-              />
+              <SecretFieldInput value={cfg.transform_studio?.token ?? ''} onChange={v => updateTS('token', v)} placeholder="Bearer token for authentication" isPassword />
               <div style={S.hint}>Leave blank if Transform Studio is running locally without auth.</div>
             </Field>
           </>
@@ -255,7 +250,7 @@ export default function TargetPage() {
             <input style={S.input} value={(cfg.iceberg.warehouse as string) ?? ''} onChange={e => updateIceberg('warehouse', e.target.value)} placeholder="my-project-name" />
           </Field>
           <Field label="Token (PAT — for Dremio Open Catalog)">
-            <input style={S.input} type="password" value={(cfg.iceberg.token as string) ?? ''} onChange={e => updateIceberg('token', e.target.value)} placeholder="Dremio Personal Access Token" />
+            <SecretFieldInput value={(cfg.iceberg.token as string) ?? ''} onChange={v => updateIceberg('token', v)} placeholder="Dremio Personal Access Token" isPassword />
             <div style={S.hint}>Use your Dremio PAT. Credential vending is handled automatically by Open Catalog — no S3 keys needed.</div>
           </Field>
           <Field label="Target namespace">
@@ -276,7 +271,7 @@ export default function TargetPage() {
                 </Field>
               </div>
               <Field label="S3 secret access key">
-                <input style={S.input} type="password" value={(cfg.iceberg['s3.secret-access-key'] as string) ?? ''} onChange={e => updateIceberg('s3.secret-access-key', e.target.value)} />
+                <SecretFieldInput value={(cfg.iceberg['s3.secret-access-key'] as string) ?? ''} onChange={v => updateIceberg('s3.secret-access-key', v)} isPassword />
               </Field>
             </div>
           </details>
