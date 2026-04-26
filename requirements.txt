@@ -1,0 +1,38 @@
+# Core
+pyyaml>=6.0
+
+# PostgreSQL
+psycopg2-binary>=2.9
+
+# MySQL
+mysql-replication>=0.45
+pymysql>=1.1
+
+# MongoDB
+pymongo>=4.6
+
+# DynamoDB
+boto3>=1.34
+
+# HTTP (Dremio REST client)
+requests>=2.31
+
+# Mode B: direct Iceberg writes (optional — install only if using sink_mode: iceberg)
+# pip install 'pyiceberg[pyarrow]>=0.6'
+pyiceberg[pyarrow]>=0.6
+pyarrow>=14.0
+
+# SQL Server
+pyodbc>=5.0
+
+# Snowflake
+snowflake-connector-python>=3.0
+
+# Oracle (via Debezium) — thin mode, no Instant Client required
+oracledb>=2.0
+
+# CockroachDB (uses psycopg2-binary, already listed above)
+
+# UI (web interface)
+flask>=3.0
+flask-cors>=4.0

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+build/
+
+# Runtime data
+*.db
+*.log
+cdc_data/
+cdc_offsets.db
+cdc_dlq.db
+
+# Local config overrides (example configs are committed)
+config.yml
+config.test.yml
+config.oracle.test.yml
+
+# Node
+ui/frontend/node_modules/
+
+# Test cache
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code
+.claude/

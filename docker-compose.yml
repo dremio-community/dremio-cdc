@@ -1,0 +1,214 @@
+version: "3.9"
+
+# Test environment — Postgres + MySQL + MongoDB + the CDC daemon
+# Start: docker compose up -d
+# Then run the CDC daemon: python main.py --config config.yml
+
+services:
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER:     cdc_user
+      POSTGRES_PASSWORD: cdc_pass
+      POSTGRES_DB:       testdb
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=4
+        -c max_wal_senders=4
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./tests/fixtures/postgres_seed.sql:/docker-entrypoint-initdb.d/seed.sql
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER:          cdc_user
+      MYSQL_PASSWORD:      cdc_pass
+      MYSQL_DATABASE:      testdb
+    command: >
+      --binlog-format=ROW
+      --binlog-row-image=FULL
+      --server-id=1
+      --log-bin=mysql-bin
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./tests/fixtures/mysql_seed.sql:/docker-entrypoint-initdb.d/seed.sql
+
+  mongo:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      retries: 5
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: >
+      mongosh --host mongo --eval
+      "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0', members:[{_id:0,host:'mongo:27017'}]}) }"
+    restart: "no"
+
+  mongo-seed:
+    image: mongo:7
+    depends_on:
+      - mongo-init
+    entrypoint: >
+      bash -c "sleep 5 && mongosh --host mongo testdb --eval
+      \"if(db.customers.countDocuments()==0){db.customers.insertMany([{name:'Alice',email:'alice@example.com',score:10.0},{name:'Bob',email:'bob@example.com',score:20.0},{name:'Charlie',email:'charlie@example.com',score:30.0}]);db.orders.insertMany([{customer:'Alice',amount:99.99,status:'completed'},{customer:'Bob',amount:149.50,status:'pending'},{customer:'Alice',amount:25.00,status:'completed'}]);}\""
+    restart: "no"
+
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: dynamodb,dynamodbstreams
+      AWS_DEFAULT_REGION: us-east-1
+      DYNAMODB_SHARE_DB: 1
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ./tests/fixtures/localstack_init.sh:/etc/localstack/init/ready.d/init.sh
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "CdcPass123!"
+      MSSQL_PID: "Developer"
+      MSSQL_AGENT_ENABLED: "true"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "CdcPass123!", "-Q", "SELECT 1", "-C"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Oracle XE 21c (for integration testing) ──────────────────────────────────
+  # ~2 GB image; takes ~90-120s to become healthy.
+  # Enables ARCHIVELOG + supplemental logging via oracle_setup.sh on first boot.
+  oracle:
+    image: gvenzl/oracle-free:23.3-slim
+    environment:
+      ORACLE_PASSWORD: oracle        # SYS / SYSTEM password (FREEPDB1 is created by default)
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      - ./tests/fixtures/oracle_setup.sh:/container-entrypoint-initdb.d/01_setup.sh
+    shm_size: "1g"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
+  # ── Debezium Server — Oracle (test profile) ───────────────────────────────────
+  # Connects to oracle service above; POSTs events to CDC daemon on the host.
+  # For production Oracle, use the commented-out block below with oracle.properties.
+  debezium-oracle:
+    image: debezium/server:2.7.3.Final
+    depends_on:
+      oracle:
+        condition: service_healthy
+    volumes:
+      - ./debezium/oracle-test.properties:/debezium/conf/application.properties
+      - debezium_oracle_data:/debezium/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── Debezium Server — production Oracle (edit oracle.properties first) ────────
+  # debezium-oracle-prod:
+  #   image: debezium/server:3.0.0.Final
+  #   ports:
+  #     - "8765:8765"
+  #   volumes:
+  #     - ./debezium/oracle.properties:/debezium/conf/application.properties
+  #     - debezium_oracle_prod_data:/debezium/data
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"   # lets Debezium reach the CDC daemon on the host
+  #
+  # debezium-sqlserver:
+  #   image: debezium/server:3.0.0.Final
+  #   ports:
+  #     - "8766:8766"
+  #   volumes:
+  #     - ./debezium/sqlserver.properties:/debezium/conf/application.properties
+  #     - debezium_sqlserver_data:/debezium/data
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #
+  # debezium-db2:
+  #   image: debezium/server:3.0.0.Final
+  #   ports:
+  #     - "8767:8767"
+  #   volumes:
+  #     - ./debezium/db2.properties:/debezium/conf/application.properties
+  #     - debezium_db2_data:/debezium/data
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+
+  # Iceberg REST catalog (lightweight — for local dev against MinIO)
+  # Exposes the Iceberg REST spec at http://localhost:8181
+  # In production, replace this with Dremio Open Catalog (Apache Polaris):
+  #   uri: https://catalog.dremio.cloud/api/iceberg  (Dremio Cloud)
+  #   uri: http://<host>:8181/api/catalog             (Dremio Enterprise)
+  # Dremio Open Catalog handles S3 credential vending automatically via its
+  # Polaris integration — no static S3 credentials needed in the config.
+  iceberg-rest:
+    image: tabulario/iceberg-rest:0.10.0
+    ports:
+      - "8181:8181"
+    environment:
+      CATALOG_WAREHOUSE:              s3://dremio-test/iceberg-warehouse
+      CATALOG_IO__IMPL:               org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT:            http://host.docker.internal:9000
+      CATALOG_S3_ACCESS__KEY__ID:     minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_REGION:                     us-east-1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Apache Polaris (optional — mirrors Dremio Open Catalog for integration testing)
+  # Polaris's S3 credential vending requires STS AssumeRole. For local MinIO testing
+  # use iceberg-rest above instead. Enable this when testing against a real AWS account.
+  # polaris:
+  #   image: apache/polaris:latest
+  #   ports:
+  #     - "8181:8181"
+  #     - "8182:8182"
+  #   environment:
+  #     AWS_REGION:                us-east-1
+  #     AWS_ACCESS_KEY_ID:         <your-aws-key>
+  #     AWS_SECRET_ACCESS_KEY:     <your-aws-secret>
+
+volumes:
+  pg_data:
+  mysql_data:
+  mongo_data:
+  sqlserver_data:
+  localstack_data:
+  oracle_data:
+  debezium_oracle_data:
+  # debezium_sqlserver_data:
+  # debezium_db2_data:
+  # debezium_oracle_prod_data:

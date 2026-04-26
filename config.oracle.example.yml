@@ -1,0 +1,114 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dremio CDC — Oracle via Debezium Server example configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Architecture:
+#
+#   Oracle DB  ──LogMiner──►  Debezium Server  ──HTTP POST──►  CDC Daemon  ──►  Dremio
+#                              (debezium/server:3.0.0.Final)           (this process)
+#
+# Step 1 — Prepare Oracle (see debezium/oracle.properties for full SQL)
+#   - Enable ARCHIVELOG mode
+#   - Enable supplemental logging (ALL COLUMNS)
+#   - Create c##dbzuser with LogMiner privileges
+#
+# Step 2 — Configure Debezium Server
+#   cp debezium/oracle.properties debezium/application.properties
+#   # Edit: database.hostname, database.user, database.password,
+#   #       database.dbname, database.pdb.name, table.include.list
+#
+# Step 3 — Start Debezium Server
+#   docker run --rm --name debezium-oracle \
+#     -p 8765:8765 \
+#     -v $(pwd)/debezium/application.properties:/debezium/conf/application.properties \
+#     -v debezium_data:/debezium/data \
+#     debezium/server:3.0.0.Final
+#
+# Step 4 — Start the CDC daemon with this config
+#   python main.py --config config.oracle.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Dremio target ─────────────────────────────────────────────────────────────
+dremio:
+  host:     localhost
+  port:     9047
+  ssl:      false
+  user:     admin
+  password: ${DREMIO_PASSWORD}
+  # For Dremio Cloud use PAT instead:
+  # pat: ${DREMIO_PAT}
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+sources:
+
+  # The Debezium source is a passive HTTP receiver.
+  # Debezium Server connects to Oracle and POSTs change events here.
+  # listen_port must match debezium.sink.http.url in oracle.properties.
+  - name: oracle_hr
+    type: debezium
+    listen_port: 8765
+    tables:
+      - HR.EMPLOYEES        # must match debezium.source.table.include.list
+      - HR.DEPARTMENTS
+      - HR.JOBS
+      - FINANCE.ACCOUNTS
+
+  # You can add a second Debezium source (e.g. for a different Oracle PDB)
+  # on a different port — just run a second Debezium Server instance.
+  # - name: oracle_finance
+  #   type: debezium
+  #   listen_port: 8766
+  #   tables:
+  #     - FINANCE.LEDGER
+  #     - FINANCE.TRANSACTIONS
+
+# ── Global options ────────────────────────────────────────────────────────────
+options:
+  sink_mode:             iceberg     # "dremio" (Mode A) or "iceberg" (Mode B)
+  batch_size:            1000        # Oracle LogMiner batches can be large
+  batch_timeout_seconds: 30
+  snapshot_on_first_run: false       # Debezium handles its own snapshot
+  offset_db_path:        ./cdc_offsets.db
+
+  # Column masking — applied before writing to Dremio.
+  # Useful for Oracle SALARY, SSN, or card number columns.
+  # masking rules are inherited by all tables unless overridden per source.
+
+# ── PII masking (optional) ────────────────────────────────────────────────────
+# Specify per table under the source. Key = table name as it appears in events
+# (schema.table format from Debezium, uppercased for Oracle).
+#
+# Available functions: redact, hash_sha256, hash_md5, mask, nullify, tokenize,
+#                      mask_email, mask_phone, mask_ssn, mask_card
+#
+# Example — mask Oracle HR.EMPLOYEES salary and SSN:
+# sources:
+#   - name: oracle_hr
+#     type: debezium
+#     listen_port: 8765
+#     masking:
+#       HR.EMPLOYEES:
+#         SALARY: nullify
+#         SSN:    hash_sha256
+#     tables:
+#       - HR.EMPLOYEES
+
+# ── Iceberg catalog (Mode B — recommended for Dremio Cloud) ──────────────────
+iceberg:
+  type:             rest
+  uri:              https://catalog.dremio.cloud/api/iceberg
+  token:            ${DREMIO_PAT}
+  warehouse:        my-project-name          # Dremio Cloud project name
+  target_namespace: oracle_cdc
+  write_mode:       merge                    # merge = upsert by PK
+
+# ── Alerting (optional) ──────────────────────────────────────────────────────
+alerts:
+  enabled:                  true
+  lag_threshold_seconds:    120   # Oracle LogMiner can have higher latency
+  error_count_threshold:    5
+  cooldown_seconds:         300
+  check_interval_seconds:   60
+  channels:
+    - type: slack
+      webhook_url: ${SLACK_WEBHOOK_URL}

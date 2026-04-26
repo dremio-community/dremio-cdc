@@ -1,0 +1,147 @@
+# Dremio CDC — example configuration
+# Copy to config.yml and edit for your environment.
+# Values like ${MY_ENV_VAR} are expanded from environment variables.
+
+# ── Dremio connection ─────────────────────────────────────────────────────────
+dremio:
+  host:             localhost
+  port:             9047
+  ssl:              false
+  user:             admin
+  password:         ${DREMIO_PASSWORD}
+  # pat:            ${DREMIO_PAT}        # use PAT instead of user/password for Dremio Cloud
+  target_namespace: cdc                  # Dremio source/space where CDC tables are created
+                                         # Must be an Iceberg-capable source (not a Space)
+
+# ── CDC sources ───────────────────────────────────────────────────────────────
+sources:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  - name: my_postgres
+    type: postgres
+    connection:
+      host:              localhost
+      port:              5432
+      database:          mydb
+      user:              cdc_user
+      password:          ${POSTGRES_PASSWORD}
+      replication_slot:  dremio_cdc      # created automatically if missing
+      publication:       dremio_cdc      # created automatically if missing
+    tables:
+      - public.customers
+      - public.orders
+      - public.products
+
+  # ── MySQL ────────────────────────────────────────────────────────────────────
+  - name: my_mysql
+    type: mysql
+    connection:
+      host:      localhost
+      port:      3306
+      database:  mydb
+      user:      cdc_user
+      password:  ${MYSQL_PASSWORD}
+      server_id: 1001                    # unique server ID for replication
+    tables:
+      - mydb.users
+      - mydb.events
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  - name: my_mongo
+    type: mongodb
+    connection:
+      uri: mongodb://user:pass@localhost:27017/?authSource=admin
+      # or use host/port/user/password/auth_source individually
+    tables:
+      - mydb.leads                       # format: database.collection
+
+  # ── DynamoDB ─────────────────────────────────────────────────────────────────
+  - name: my_dynamo
+    type: dynamodb
+    connection:
+      region:               us-east-1
+      aws_access_key_id:    ${AWS_ACCESS_KEY_ID}
+      aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      # endpoint_url: http://localhost:8000   # for DynamoDB Local
+    tables:
+      - Orders
+      - Products
+
+  # ── Debezium adapter (Oracle / SQL Server / DB2) ──────────────────────────────
+  # Run Debezium Server with the HTTP sink pointing at this daemon.
+  # Pre-built configs are in debezium/oracle.properties, sqlserver.properties, db2.properties.
+  # See config.oracle.example.yml for a full annotated Oracle setup.
+  #
+  # Quick start:
+  #   cp debezium/oracle.properties debezium/application.properties
+  #   # edit hostname/credentials/table list
+  #   docker run --rm -p 8765:8765 \
+  #     -v $(pwd)/debezium/application.properties:/debezium/conf/application.properties \
+  #     debezium/server:3.0.0.Final
+  #
+  # One source entry per Debezium Server instance (each gets its own listen_port).
+  - name: oracle_prod
+    type: debezium
+    listen_port: 8765                    # must match debezium.sink.http.url port
+    tables:
+      - HR.EMPLOYEES                     # schema.table — Oracle is uppercase
+      - HR.DEPARTMENTS
+      - FINANCE.ACCOUNTS
+  # - name: sqlserver_legacy
+  #   type: debezium
+  #   listen_port: 8766
+  #   tables:
+  #     - dbo.customers
+
+# ── Global options ────────────────────────────────────────────────────────────
+options:
+  sink_mode:              dremio         # "dremio" (Mode A) or "iceberg" (Mode B)
+  batch_size:             500            # max events per write
+  batch_timeout_seconds:  10             # flush even if batch_size not reached
+  snapshot_on_first_run:  true           # full table scan before streaming
+  offset_db_path:         ./cdc_offsets.db
+  log_level:              INFO
+
+# ── Iceberg catalog (required only when sink_mode: iceberg) ──────────────────
+# Mode B: PyIceberg writes directly to an Iceberg REST catalog.
+# Tables are immediately queryable in Dremio without a separate refresh step
+# when using Dremio Open Catalog (the recommended target).
+#
+# ── Option 1: Dremio Open Catalog (recommended) ──────────────────────────────
+# Dremio Open Catalog is built on Apache Polaris and is the native catalog in
+# both Dremio Cloud and Dremio Enterprise. Writes land directly in the catalog
+# Dremio reads from — no metadata refresh needed, tables appear instantly.
+#
+# Dremio Cloud:
+# iceberg:
+#   type:               rest
+#   uri:                https://catalog.dremio.cloud/api/iceberg
+#   token:              ${DREMIO_PAT}          # Personal Access Token
+#   warehouse:          my-project-name        # Dremio Cloud project name
+#   target_namespace:   cdc
+#   write_mode:         merge
+#
+# Dremio Enterprise (on-prem Open Catalog):
+# iceberg:
+#   type:               rest
+#   uri:                http://localhost:8181/api/catalog
+#   token:              ${DREMIO_PAT}
+#   warehouse:          my-catalog-name
+#   target_namespace:   cdc
+#   write_mode:         merge
+#
+# ── Option 2: External catalog + Dremio metadata refresh ─────────────────────
+# For self-hosted Apache Polaris, Nessie, AWS Glue, or Hive. After each batch
+# the daemon calls ALTER TABLE REFRESH METADATA on Dremio so it picks up new files.
+#
+# iceberg:
+#   type:               rest             # rest | nessie | glue | hive
+#   uri:                http://localhost:8181
+#   warehouse:          s3://my-bucket/warehouse
+#   target_namespace:   cdc
+#   write_mode:         merge
+#   # S3 / MinIO credentials (passed through to PyIceberg)
+#   s3.endpoint:        http://localhost:9000
+#   s3.access-key-id:   minioadmin
+#   s3.secret-access-key: minioadmin
+#   s3.path-style-access: "true"

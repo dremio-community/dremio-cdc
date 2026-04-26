@@ -1,0 +1,34 @@
+dremio:
+  host: localhost
+  password: Hoyasaxa7788&&**
+  port: 9047
+  ssl: false
+  user: mark
+
+sources:
+- name: postgres_local
+  type: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: testdb
+    user: cdc_user
+    password: cdc_pass
+    replication_slot: dremio_cdc_cloud
+    publication: dremio_cdc_test
+  tables:
+  - public.customers
+  - public.orders
+
+options:
+  sink_mode: iceberg
+  incremental_snapshot: false
+  snapshot_on_first_run: true
+
+iceberg:
+  type: rest
+  uri: https://catalog.dremio.cloud/api/iceberg
+  token: 5g9KmDHFTkKOKZdUa65b2wQozzI3xzUfIENU0O1VhlgupUQHM5qXssGeoPQ5vg==
+  warehouse: first-project
+  target_namespace: cdc_demo
+  write_mode: merge

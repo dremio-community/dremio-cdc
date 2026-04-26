@@ -1,0 +1,38 @@
+# Development
+.git
+.gitignore
+.claude
+**/__pycache__
+**/*.pyc
+**/*.pyo
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Frontend source (built dist is copied from Stage 1)
+ui/frontend/node_modules
+ui/frontend/src
+ui/frontend/index.html
+ui/frontend/vite.config.ts
+ui/frontend/tsconfig*.json
+ui/frontend/package*.json
+
+# Test fixtures and test configs
+tests/
+pytest.ini
+
+# Local config files (users mount their own)
+config.yml
+config.test.yml
+config.cloud.yml
+config.oracle.test.yml
+
+# Runtime data files
+*.db
+*.log
+cdc_data/
+
+# Python virtual environments
+.venv
+venv
+env
