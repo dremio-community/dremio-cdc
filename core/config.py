@@ -1,38 +1,27 @@
 """
-YAML config loader and validation.
+YAML config loader with full secrets resolution.
+
+Supports ${ENV_VAR} and vault:path#field references anywhere in the config.
+See core/secrets.py for Vault setup details.
 """
 from __future__ import annotations
 
-import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     import yaml
 except ImportError:
     raise SystemExit("PyYAML is required: pip install pyyaml")
 
-
-def _env(value: Any) -> Any:
-    """Expand ${ENV_VAR} references in string config values."""
-    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-        var = value[2:-1]
-        return os.environ.get(var, value)
-    return value
+from core.secrets import build_resolver
 
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path) as f:
         cfg = yaml.safe_load(f)
 
-    # expand env vars in connection blocks
-    for source in cfg.get("sources", []):
-        conn = source.get("connection", {})
-        for k, v in conn.items():
-            conn[k] = _env(v)
-
-    dremio = cfg.get("dremio", {})
-    for k, v in dremio.items():
-        dremio[k] = _env(v)
+    resolver = build_resolver(cfg)
+    cfg = resolver.walk(cfg)
 
     return cfg
 
