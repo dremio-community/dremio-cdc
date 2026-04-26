@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle, ChevronDown, ChevronRight, Columns, Database, Loader, Plus, Table, Trash2, X } from 'lucide-react'
 import { getSources, addSource, updateSource, deleteSource, testSource, createSourceTables, Source, CreateTableResult } from '../api/client'
+import SecretFieldInput from './SecretFieldInput'
 
 const MASK_FNS = [
   '', 'redact', 'hash_sha256', 'hash_md5', 'mask', 'nullify', 'tokenize',
@@ -312,12 +313,22 @@ function SourceModal({ initial, onClose, onSaved }: {
             {fields.map(f => (
               <div style={S.field} key={f.key}>
                 <label style={S.label}>{f.label}</label>
-                <input style={S.input}
-                  type={f.secret ? 'password' : 'text'}
-                  value={conn[f.key] ?? ''}
-                  onChange={e => setConn(c => ({ ...c, [f.key]: e.target.value }))}
-                  placeholder={f.placeholder ?? ''}
-                />
+                {f.secret ? (
+                  <SecretFieldInput
+                    value={conn[f.key] ?? ''}
+                    onChange={v => setConn(c => ({ ...c, [f.key]: v }))}
+                    placeholder={f.placeholder ?? ''}
+                    isPassword
+                    inputStyle={{ boxSizing: 'border-box' }}
+                  />
+                ) : (
+                  <input style={S.input}
+                    type="text"
+                    value={conn[f.key] ?? ''}
+                    onChange={e => setConn(c => ({ ...c, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder ?? ''}
+                  />
+                )}
               </div>
             ))}
 
