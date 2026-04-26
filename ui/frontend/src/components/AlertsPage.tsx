@@ -190,7 +190,7 @@ function ChannelForm({ type, onAdd, onCancel }: {
   onCancel: () => void
 }) {
   const [f, setF] = useState<Record<string, string | boolean | number>>({ type })
-  const set = (k: string, v: unknown) => setF(c => ({ ...c, [k]: v }))
+  const set = (k: string, v: string | boolean | number) => setF(c => ({ ...c, [k]: v }))
 
   const submit = () => onAdd(f as unknown as AlertChannel)
 

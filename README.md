@@ -55,7 +55,7 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 
 ```bash
 # 1. Pull the image
-docker pull markshainman/dremio-cdc:latest
+docker pull mshainman/dremio-cdc:latest
 
 # 2. Copy and edit the example config
 curl -O https://raw.githubusercontent.com/dremio-community/dremio-cdc/main/config.example.yml
@@ -68,7 +68,7 @@ docker run -d \
   -p 7070:7070 \
   -v $(pwd)/config.yml:/app/config.yml \
   -v $(pwd)/cdc_data:/app/data \
-  markshainman/dremio-cdc:latest
+  mshainman/dremio-cdc:latest
 
 # 4. Open the web UI
 open http://localhost:7070
@@ -440,7 +440,7 @@ docker run -d \
   -v $(pwd)/cdc_data:/app/data \
   -e DREMIO_PASSWORD=secret \
   -e PG_PASSWORD=secret \
-  markshainman/dremio-cdc:latest
+  mshainman/dremio-cdc:latest
 ```
 
 ### Docker Compose (with source databases for dev/test)
@@ -463,7 +463,7 @@ docker run ... \
   -e DREMIO_PAT=eyJ... \
   -e PG_PASSWORD=secret \
   -e AWS_ACCESS_KEY_ID=AKIA... \
-  markshainman/dremio-cdc:latest
+  mshainman/dremio-cdc:latest
 ```
 
 ---
