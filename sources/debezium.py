@@ -235,8 +235,8 @@ class DebeziumSource(CDCSource):
         source     = value.get("source", {})
         table      = source.get("table") or source.get("collection") or "unknown"
         connector  = source.get("connector", "")
-        # For Oracle, "db" is the PDB name (FREEPDB1), not the schema; use "schema" instead
-        if connector == "oracle":
+        # Oracle uses "schema" for the namespace; DB2 also uses "schema" (not "db" which is the database name)
+        if connector in ("oracle", "db2"):
             db = source.get("schema") or ""
         else:
             db = source.get("db") or source.get("schema") or ""
@@ -266,9 +266,9 @@ class DebeziumSource(CDCSource):
             schema=schema,
             timestamp=datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
             offset={"ts_ms": ts_ms, "table": full_table,
-                    "scn": source.get("scn"),        # Oracle SCN
-                    "lsn": source.get("lsn"),        # SQL Server / Postgres LSN
-                    "gtid": source.get("gtid")},     # MySQL GTID
+                    "scn":  source.get("scn"),                                   # Oracle SCN
+                    "lsn":  source.get("lsn") or source.get("commit_lsn"),      # SQL Server/Postgres LSN; DB2 commit_lsn
+                    "gtid": source.get("gtid")},                                 # MySQL GTID
         )]
 
     def close(self):

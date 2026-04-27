@@ -3889,3 +3889,533 @@ class TestIcebergCloudDeduplication(unittest.TestCase):
             assert rows[2]["email"] == "bob@example.com"
         finally:
             self._drop_table(src)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 22. Debezium DB2 payload tests — schema mapping, LSN offset, table naming
+#     No external service needed: posts synthetic DB2-format Debezium payloads.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.integration
+class TestDebeziumDB2Payloads:
+    """
+    Tests the DB2-specific handling in DebeziumSource:
+      - table full_name uses source.schema (not source.db)
+      - DDL / heartbeat events are dropped
+      - DECIMAL logical type maps to 'numeric'
+      - commit_lsn preserved in event offset
+      - case-insensitive table filter
+      - INSERT / UPDATE / DELETE / SNAPSHOT ops
+    Uses port 8769 to avoid conflict with Oracle payload tests on 8768.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        from sources.debezium import DebeziumSource
+        cls.src = DebeziumSource("db2_payload_test", {"listen_port": 8769})
+        cls.src.connect()
+        time.sleep(0.2)
+
+    @classmethod
+    def teardown_class(cls):
+        cls.src.close()
+
+    def setup_method(self):
+        import queue as _q
+        while not self.src._q.empty():
+            try:
+                self.src._q.get_nowait()
+            except _q.Empty:
+                break
+
+    def _post(self, payload: dict):
+        import json, http.client
+        body = json.dumps(payload).encode()
+        conn = http.client.HTTPConnection("localhost", 8769, timeout=5)
+        conn.request("POST", "/events", body,
+                     {"Content-Length": str(len(body)), "Content-Type": "application/json"})
+        resp = conn.getresponse()
+        conn.close()
+        return resp.status
+
+    def _db2_payload(self, op: str, table: str = "EMPLOYEES", *,
+                     schema: str = "DB2INST1", db: str = "TESTDB",
+                     before=None, after=None,
+                     commit_lsn: str = "00000025:00001234:0002"):
+        """Build a realistic DB2 Debezium envelope payload."""
+        col_fields = [
+            {"field": "ID",     "type": "int32",  "optional": False},
+            {"field": "NAME",   "type": "string", "optional": True},
+            {"field": "EMAIL",  "type": "string", "optional": True},
+            {"field": "SALARY", "type": "string",
+             "name": "org.apache.kafka.connect.data.Decimal", "optional": True},
+        ]
+        return {
+            "schema": {
+                "type": "struct",
+                "fields": [
+                    {"type": "struct", "fields": col_fields, "optional": True, "field": "before"},
+                    {"type": "struct", "fields": col_fields, "optional": True, "field": "after"},
+                    {
+                        "type": "struct",
+                        "fields": [
+                            {"type": "string", "optional": False, "field": "connector"},
+                            {"type": "string", "optional": False, "field": "db"},
+                            {"type": "string", "optional": False, "field": "schema"},
+                            {"type": "string", "optional": False, "field": "table"},
+                            {"type": "string", "optional": True,  "field": "change_lsn"},
+                            {"type": "string", "optional": True,  "field": "commit_lsn"},
+                        ],
+                        "optional": False,
+                        "field": "source",
+                    },
+                    {"type": "string", "optional": False, "field": "op"},
+                    {"type": "int64",  "optional": True,  "field": "ts_ms"},
+                ],
+                "optional": False,
+                "name": f"db2-cdc.{schema}.{table}.Envelope",
+                "version": 1,
+                "primaryKey": ["ID"],
+            },
+            "payload": {
+                "before": before,
+                "after":  after,
+                "source": {
+                    "connector":  "db2",
+                    "db":         db,
+                    "schema":     schema,
+                    "table":      table,
+                    "change_lsn": "00000025:00001234:0001",
+                    "commit_lsn": commit_lsn,
+                    "ts_ms":      1714000000000,
+                    "snapshot":   op == "r",
+                },
+                "op":    op,
+                "ts_ms": 1714000000000,
+            },
+        }
+
+    def _db2_ddl_payload(self):
+        """Schema-change event — no 'op' field, has 'databaseName'."""
+        return {
+            "schema": {},
+            "payload": {
+                "databaseName": "TESTDB",
+                "schemaName":   "DB2INST1",
+                "ddl":          "CREATE TABLE DB2INST1.ORDERS (ID INTEGER NOT NULL)",
+                "tableChanges": [],
+            },
+        }
+
+    def _heartbeat_payload(self):
+        return {
+            "schema": {},
+            "payload": {
+                "op":     "r",
+                "ts_ms":  1714000000000,
+                "source": {"connector": "heartbeat", "table": "", "db": ""},
+                "before": None,
+                "after":  {"ts_ms": 1714000000000},
+            },
+        }
+
+    def _collect_one(self, table: str = "DB2INST1.EMPLOYEES", timeout: float = 4.0):
+        """Collect one event from stream() and return it."""
+        import threading
+        box = []
+
+        def _run():
+            for ev in self.src.stream(table, None):
+                if ev is not None:
+                    box.append(ev)
+                    break
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        return box[0] if box else None
+
+    # ── Op mapping ────────────────────────────────────────────────────────────
+
+    def test_insert_op_emits_insert_event(self):
+        from core.event import Operation
+        self._post(self._db2_payload("c", after={"ID": 1, "NAME": "Alice", "EMAIL": "a@test.com", "SALARY": "75000.00"}))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.op == Operation.INSERT
+        assert ev.after["NAME"] == "Alice"
+
+    def test_update_op_emits_update_event(self):
+        from core.event import Operation
+        self._post(self._db2_payload(
+            "u",
+            before={"ID": 1, "NAME": "Alice",   "EMAIL": "a@test.com", "SALARY": "75000.00"},
+            after= {"ID": 1, "NAME": "Alice V2", "EMAIL": "a@test.com", "SALARY": "80000.00"},
+        ))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.op == Operation.UPDATE
+        assert ev.before["NAME"] == "Alice"
+        assert ev.after["NAME"]  == "Alice V2"
+
+    def test_delete_op_emits_delete_event(self):
+        from core.event import Operation
+        self._post(self._db2_payload(
+            "d",
+            before={"ID": 2, "NAME": "Bob", "EMAIL": "b@test.com", "SALARY": "85000.00"},
+        ))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.op == Operation.DELETE
+        assert ev.before["NAME"] == "Bob"
+        assert ev.after is None
+
+    def test_snapshot_op_emits_snapshot_event(self):
+        from core.event import Operation
+        self._post(self._db2_payload("r", after={"ID": 3, "NAME": "Charlie", "EMAIL": "c@test.com", "SALARY": "95000.00"}))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.op == Operation.SNAPSHOT
+
+    # ── DDL / heartbeat filtering ─────────────────────────────────────────────
+
+    def test_ddl_event_is_dropped(self):
+        """DB2 schema-change events must never produce a ChangeEvent."""
+        import threading
+        received = []
+
+        def _run():
+            for ev in self.src.stream("DB2INST1.EMPLOYEES", None):
+                if ev is not None:
+                    received.append(ev)
+                    break
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.1)
+        self._post(self._db2_ddl_payload())
+        # Follow with a real DML so the thread exits
+        self._post(self._db2_payload("c", after={"ID": 10, "NAME": "DDL_After", "EMAIL": None, "SALARY": None}))
+        t.join(timeout=5)
+        assert len(received) == 1
+        from core.event import Operation
+        assert received[0].op == Operation.INSERT
+
+    def test_heartbeat_is_dropped(self):
+        import threading
+        received = []
+
+        def _run():
+            for ev in self.src.stream("DB2INST1.EMPLOYEES", None):
+                if ev is not None:
+                    received.append(ev)
+                    break
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.1)
+        self._post(self._heartbeat_payload())
+        self._post(self._db2_payload("c", after={"ID": 11, "NAME": "HB_After", "EMAIL": None, "SALARY": None}))
+        t.join(timeout=5)
+        assert len(received) == 1
+
+    # ── Schema / type mapping ─────────────────────────────────────────────────
+
+    def test_decimal_logical_type_maps_to_numeric(self):
+        """SALARY with org.apache.kafka.connect.data.Decimal logical type → 'numeric'."""
+        self._post(self._db2_payload("c", after={"ID": 20, "NAME": "Dec", "EMAIL": None, "SALARY": "99.99"}))
+        ev = self._collect_one()
+        assert ev is not None
+        col_types = {c.name: c.data_type for c in ev.schema}
+        assert col_types.get("SALARY") == "numeric"
+
+    def test_integer_type_maps_to_integer(self):
+        """ID with int32 type → 'integer' data type."""
+        self._post(self._db2_payload("c", after={"ID": 21, "NAME": "Int", "EMAIL": None, "SALARY": None}))
+        ev = self._collect_one()
+        assert ev is not None
+        col_types = {c.name: c.data_type for c in ev.schema}
+        assert col_types.get("ID") in ("integer", "smallint", "int")
+
+    def test_pk_detected_from_primary_key_list(self):
+        """ID declared in schema.primaryKey → primary_key=True on the ColumnSchema."""
+        self._post(self._db2_payload("c", after={"ID": 22, "NAME": "PK", "EMAIL": None, "SALARY": None}))
+        ev = self._collect_one()
+        assert ev is not None
+        pk_cols = [c.name for c in ev.schema if c.primary_key]
+        assert "ID" in pk_cols
+
+    # ── DB2-specific: table name and offset ───────────────────────────────────
+
+    def test_table_name_uses_schema_not_db(self):
+        """full_table must be 'DB2INST1.EMPLOYEES', not 'TESTDB.EMPLOYEES'."""
+        self._post(self._db2_payload("c", after={"ID": 30, "NAME": "Schema", "EMAIL": None, "SALARY": None}))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.source_table == "DB2INST1.EMPLOYEES", \
+            f"Expected DB2INST1.EMPLOYEES, got {ev.source_table}"
+
+    def test_commit_lsn_preserved_in_offset(self):
+        """DB2 commit_lsn from source metadata is stored in the event offset."""
+        lsn = "00000042:00005678:0003"
+        self._post(self._db2_payload("c", after={"ID": 31, "NAME": "LSN", "EMAIL": None, "SALARY": None},
+                                     commit_lsn=lsn))
+        ev = self._collect_one()
+        assert ev is not None
+        assert ev.offset is not None
+        # commit_lsn maps to the generic "lsn" offset key
+        assert ev.offset.get("lsn") == lsn, f"Expected lsn={lsn}, got {ev.offset}"
+
+    def test_table_filter_case_insensitive(self):
+        """Filter 'DB2INST1.EMPLOYEES' matches DB2's uppercase 'EMPLOYEES'."""
+        import threading
+        captured = []
+
+        def _run():
+            for ev in self.src.stream("DB2INST1.EMPLOYEES", None):
+                if ev is not None:
+                    captured.append(ev)
+                    break
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.1)
+        # Wrong table — should be filtered
+        self._post(self._db2_payload("c", table="ORDERS",
+                                     after={"ID": 99, "NAME": "Skip", "EMAIL": None, "SALARY": None}))
+        # Matching table
+        self._post(self._db2_payload("c", table="EMPLOYEES",
+                                     after={"ID": 32, "NAME": "Match", "EMAIL": None, "SALARY": None}))
+        t.join(timeout=5)
+        assert len(captured) == 1
+        assert captured[0].after["NAME"] == "Match"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 23. IBM Db2 + Debezium Server live integration
+# ══════════════════════════════════════════════════════════════════════════════
+# Requires docker-compose services: db2, debezium-db2
+#   docker compose up -d db2
+#   docker compose build debezium-db2 && docker compose up -d debezium-db2
+# Db2 takes ~5 minutes to initialize; Debezium takes ~60s to connect.
+# Run only these tests:
+#   pytest tests/test_e2e.py -m db2 -v
+# ══════════════════════════════════════════════════════════════════════════════
+
+DB2_HOST = "localhost"
+DB2_PORT = 50000
+DB2_USER = "db2inst1"
+DB2_PASS = "db2pass"
+DB2_DB   = "TESTDB"
+
+
+def _db2_conn():
+    import ibm_db
+    conn_str = (
+        f"DATABASE={DB2_DB};HOSTNAME={DB2_HOST};PORT={DB2_PORT};"
+        f"PROTOCOL=TCPIP;UID={DB2_USER};PWD={DB2_PASS};"
+    )
+    return ibm_db.connect(conn_str, "", "")
+
+
+def _db2_exec(conn, sql: str):
+    import ibm_db
+    stmt = ibm_db.exec_immediate(conn, sql)
+    return stmt
+
+
+def _db2_wait_for_events(src, table: str, n: int, timeout: int = 90):
+    """Collect up to n non-None events from src.stream(), with timeout."""
+    import threading
+    from core.event import ChangeEvent
+    collected: list = []
+    done = threading.Event()
+
+    def _run():
+        for ev in src.stream(table, None):
+            if ev is None:
+                if done.is_set():
+                    break
+                continue
+            collected.append(ev)
+            if len(collected) >= n:
+                done.set()
+                break
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    done.set()
+    return collected
+
+
+@pytest.mark.db2
+class TestDb2DebeziumLive:
+    """
+    End-to-end: IBM Db2 → Debezium Server → DebeziumSource → parsed events.
+    Requires: docker compose up -d db2 && docker compose up -d debezium-db2
+    The debezium-db2 service POSTs to host.docker.internal:8767 (this test's listener).
+    """
+
+    @classmethod
+    def setup_class(cls):
+        import subprocess, os, time
+        from sources.debezium import DebeziumSource
+        compose_dir = os.path.dirname(os.path.dirname(__file__))
+
+        # Ensure asncap is running (may not survive container restart)
+        result = subprocess.run(
+            ["docker", "exec", "dremio-cdc-db2-1", "pgrep", "-f", "asncap"],
+            capture_output=True)
+        if result.returncode != 0:
+            subprocess.run(
+                ["docker", "exec", "-d", "dremio-cdc-db2-1", "bash", "-c",
+                 "nohup su - db2inst1 -c 'asncap capture_server=TESTDB capture_schema=ASNCDC capture_path=/tmp AUTOSTOP=N' > /tmp/asncap_test.log 2>&1 &"],
+                capture_output=True)
+            time.sleep(8)
+
+        # Stop Debezium first so we don't race with snapshot events
+        subprocess.run(["docker", "compose", "stop", "debezium-db2"],
+                       cwd=compose_dir, capture_output=True)
+
+        # Clean up any extra test rows and stale CDC data from previous runs
+        try:
+            conn = _db2_conn()
+            _db2_exec(conn, "DELETE FROM DB2INST1.EMPLOYEES WHERE ID > 3")
+            _db2_exec(conn, "DELETE FROM DB2INST1.CDEMPLOYEES")
+            _db2_exec(conn, "DELETE FROM ASNCDC.IBMSNAP_REGISTER WHERE STATE = 'I' AND TRIM(SOURCE_OWNER) = ''")
+            import ibm_db
+            ibm_db.commit(conn)
+            ibm_db.close(conn)
+        except Exception:
+            pass
+
+        # Wipe Debezium offset + schema history so it re-snapshots
+        subprocess.run(
+            ["docker", "run", "--rm",
+             "-v", "dremio-cdc_debezium_db2_data:/data",
+             "alpine", "sh", "-c",
+             "rm -f /data/db2-test-offsets.dat /data/db2-test-schema-history.dat"],
+            cwd=compose_dir, capture_output=True,
+        )
+
+        # Bind the listener port BEFORE starting Debezium so no events are lost
+        cls.src = DebeziumSource("db2_live", {"listen_port": 8767})
+        cls.src.connect()
+
+        subprocess.run(["docker", "compose", "start", "debezium-db2"],
+                       cwd=compose_dir, check=True, capture_output=True)
+
+    @classmethod
+    def teardown_class(cls):
+        cls.src.close()
+
+    def setup_method(self):
+        while not self.src._q.empty():
+            try:
+                self.src._q.get_nowait()
+            except Exception:
+                break
+
+    # ── 1. Initial snapshot ───────────────────────────────────────────────────
+
+    def test_snapshot_rows_arrive(self):
+        """Debezium delivers the 3 pre-seeded employees as SNAPSHOT events."""
+        events = _db2_wait_for_events(self.src, "DB2INST1.EMPLOYEES", 3, timeout=120)
+        assert len(events) >= 3, f"Expected ≥3 snapshot events, got {len(events)}"
+        names = {e.after["NAME"] for e in events if e.after}
+        assert "Alice" in names
+        assert "Bob" in names
+
+    # ── 2. Streaming: INSERT ──────────────────────────────────────────────────
+
+    def test_streaming_insert(self):
+        """INSERT into Db2 produces an INSERT event."""
+        from core.event import Operation
+        conn = _db2_conn()
+        import ibm_db
+        _db2_exec(conn, "INSERT INTO DB2INST1.EMPLOYEES VALUES (101, 'Dave', 'dave@test.com', 65000.00)")
+        ibm_db.commit(conn)
+        ibm_db.close(conn)
+
+        events = _db2_wait_for_events(self.src, "DB2INST1.EMPLOYEES", 1, timeout=60)
+        assert events, "No INSERT event received"
+        ins = next((e for e in events if e.op == Operation.INSERT
+                    and e.after and e.after.get("NAME") == "Dave"), None)
+        assert ins is not None, f"INSERT event for Dave not found in {events}"
+
+    # ── 3. Streaming: UPDATE ──────────────────────────────────────────────────
+
+    def test_streaming_update(self):
+        """UPDATE produces an UPDATE event with correct after image.
+
+        IBM DB2 LUW ASNCAP produces single 'U' (after-image only) rows for all
+        UPDATEs — the Debezium LUW LEAD/LAG query does not handle 'U'.  The view
+        ASNCDC.CDEMPLOYEES maps 'U'/'X' → 'I' to prevent connector crashes, but
+        those events arrive as INSERT, not UPDATE.
+
+        To get a true UPDATE event (OPCODE 3+4), we use DELETE + INSERT in the
+        *same transaction* — ASNCAP emits a D+I pair in the same IBMSNAP_COMMITSEQ,
+        which the LEAD/LAG window functions detect as UPDATE_BEFORE + UPDATE_AFTER.
+        """
+        from core.event import Operation
+        conn = _db2_conn()
+        import ibm_db
+        # Ensure row exists
+        try:
+            _db2_exec(conn, "INSERT INTO DB2INST1.EMPLOYEES VALUES (102, 'Eve', 'eve@test.com', 70000.00)")
+            ibm_db.commit(conn)
+        except Exception:
+            ibm_db.rollback(conn)
+        # DELETE + INSERT in the same commit → ASNCAP emits D+I pair with the same
+        # IBMSNAP_COMMITSEQ; Debezium's LEAD/LAG detects this as an UPDATE.
+        # ibm_db.connect() defaults to auto-commit ON, so we must disable it here
+        # to group the two statements into a single transaction.
+        ibm_db.autocommit(conn, 0)  # 0 = SQL_AUTOCOMMIT_OFF
+        _db2_exec(conn, "DELETE FROM DB2INST1.EMPLOYEES WHERE ID = 102")
+        _db2_exec(conn, "INSERT INTO DB2INST1.EMPLOYEES VALUES (102, 'Eve', 'eve@test.com', 80000.00)")
+        ibm_db.commit(conn)
+        ibm_db.close(conn)
+
+        events = _db2_wait_for_events(self.src, "DB2INST1.EMPLOYEES", 2, timeout=60)
+        upd = next((e for e in events if e.op == Operation.UPDATE
+                    and e.after and e.after.get("NAME") == "Eve"), None)
+        assert upd is not None, "UPDATE event for Eve not found"
+
+    # ── 4. Streaming: DELETE ──────────────────────────────────────────────────
+
+    def test_streaming_delete(self):
+        """DELETE produces a DELETE event with before-image."""
+        from core.event import Operation
+        conn = _db2_conn()
+        import ibm_db
+        try:
+            _db2_exec(conn, "INSERT INTO DB2INST1.EMPLOYEES VALUES (103, 'Frank', 'frank@test.com', 55000.00)")
+            ibm_db.commit(conn)
+        except Exception:
+            ibm_db.rollback(conn)
+        _db2_exec(conn, "DELETE FROM DB2INST1.EMPLOYEES WHERE ID = 103")
+        ibm_db.commit(conn)
+        ibm_db.close(conn)
+
+        events = _db2_wait_for_events(self.src, "DB2INST1.EMPLOYEES", 2, timeout=60)
+        delete_ev = next((e for e in events if e.op == Operation.DELETE
+                          and e.before and e.before.get("NAME") == "Frank"), None)
+        assert delete_ev is not None, "DELETE event for Frank not found"
+        assert delete_ev.after is None
+
+    # ── 5. Commit LSN in offset ───────────────────────────────────────────────
+
+    def test_commit_lsn_in_offset(self):
+        """Every streaming event offset contains a commit_lsn value."""
+        conn = _db2_conn()
+        import ibm_db
+        _db2_exec(conn, "INSERT INTO DB2INST1.EMPLOYEES VALUES (104, 'Grace', 'grace@test.com', 60000.00)")
+        ibm_db.commit(conn)
+        ibm_db.close(conn)
+
+        events = _db2_wait_for_events(self.src, "DB2INST1.EMPLOYEES", 1, timeout=60)
+        assert events, "No event received"
+        assert events[0].offset is not None
+        assert events[0].offset.get("lsn") is not None, \
+            f"commit_lsn missing from offset: {events[0].offset}"
