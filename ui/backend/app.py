@@ -108,7 +108,7 @@ def _dremio_headers(dremio_cfg: dict):
 
 
 def _validate_dremio_namespace(dremio_cfg: dict, namespace: str) -> Optional[str]:
-    """Return error string if namespace is invalid, None if OK."""
+    """Return error string if namespace is invalid, None if OK or unreachable."""
     try:
         import requests as req
         headers, _, catalog_url = _dremio_headers(dremio_cfg)
@@ -125,7 +125,9 @@ def _validate_dremio_namespace(dremio_cfg: dict, namespace: str) -> Optional[str
             return (f"'{namespace}' is a Dremio Space, which doesn't support CREATE TABLE. "
                     f"Use a writable source instead (e.g. {sources[0] if sources else 'hudi_local'}).")
     except Exception as exc:
-        return f"Could not validate namespace: {exc}"
+        # Dremio unreachable — log a warning but don't block engine start.
+        # The engine will surface connection errors when it first tries to write.
+        logger.warning("Could not validate Dremio namespace (Dremio may be offline): %s", exc)
     return None
 
 
