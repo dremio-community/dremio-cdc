@@ -87,19 +87,24 @@ class DremioSink:
     # ── Auth ─────────────────────────────────────────────────────────────────
 
     def connect(self):
-        if self._pat:
-            self._token = self._pat
-            self._bearer = True
-        else:
-            r = requests.post(
-                f"{self._base}/apiv2/login",
-                json={"userName": self._user, "password": self._password},
-                timeout=15,
-            )
-            r.raise_for_status()
-            self._token = r.json()["token"]
-            self._bearer = False
-        logger.info("Connected to Dremio at %s", self._base)
+        """Authenticate against Dremio. Logs a warning (does not raise) if unreachable."""
+        try:
+            if self._pat:
+                self._token = self._pat
+                self._bearer = True
+            else:
+                r = requests.post(
+                    f"{self._base}/apiv2/login",
+                    json={"userName": self._user, "password": self._password},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                self._token = r.json()["token"]
+                self._bearer = False
+            logger.info("Connected to Dremio at %s", self._base)
+        except Exception as exc:
+            logger.warning("Dremio unreachable at startup (%s) — will retry on first write", exc)
+            self._token = None
 
     def _headers(self) -> Dict[str, str]:
         if self._bearer:
@@ -120,6 +125,8 @@ class DremioSink:
 
     def _sql(self, sql: str, retries: int = 3) -> Optional[Dict]:
         """Submit a SQL job and poll until complete."""
+        if self._token is None:
+            self.connect()  # deferred connect if startup failed
         for attempt in range(retries):
             try:
                 r = requests.post(
