@@ -31,7 +31,8 @@ snowflake-connector-python>=3.0
 # Oracle (via Debezium) — thin mode, no Instant Client required
 oracledb>=2.0
 
-# CockroachDB (uses psycopg2-binary, already listed above)
+# CockroachDB (psycopg2-binary for schema/snapshot, asyncpg for streaming changefeed)
+asyncpg>=0.29
 
 # UI (web interface)
 flask>=3.0

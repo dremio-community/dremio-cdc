@@ -14,9 +14,13 @@ import sys
 import time
 import uuid
 import datetime
+import threading
+import unittest
 
 import pytest
 import requests
+
+from core.event import ChangeEvent, ColumnSchema, Operation
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -2869,3 +2873,430 @@ class TestAlertManager:
         assert mgr._lag_threshold == 30
         assert mgr._error_threshold == 2
         assert mgr._cooldown == 10
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 18. Schema Drift detection — pure unit tests (no docker needed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _DriftMockSource:
+    """Mock CDC source with a swappable schema."""
+    name = "drift_source"
+
+    def __init__(self, schema):
+        self._schema = schema
+
+    def get_schema(self, table):
+        return list(self._schema)
+
+
+class _DriftMockSink:
+    def __init__(self):
+        self.evolved = []
+
+    def evolve_schema(self, table, schema):
+        self.evolved.append((table, schema))
+
+
+def _make_worker(source, sink, schema_store, drift_action="alert"):
+    from core.offset_store import SQLiteOffsetStore
+    from core.status_store import StatusStore
+    from core.engine import TableWorker
+
+    return TableWorker(
+        source=source,
+        table="customers",
+        sink=sink,
+        offset_store=SQLiteOffsetStore(":memory:"),
+        status_store=StatusStore(),
+        options={
+            "batch_size": 100,
+            "schema_drift_action": drift_action,
+            "schema_drift_check_every_n_batches": 1,
+        },
+        schema_store=schema_store,
+    )
+
+
+class TestSchemaDrift(unittest.TestCase):
+
+    def _schema(self, cols):
+        return [ColumnSchema(name=n, data_type=t) for n, t in cols]
+
+    def test_first_scan_stores_schema_no_drift(self):
+        """First call records the schema; no drift reported."""
+        from core.schema_store import SchemaStore
+        from core.status_store import StatusStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer"), ("name", "text")]))
+        w = _make_worker(src, _DriftMockSink(), ss)
+        w._check_schema_drift()
+
+        stored = ss.get("drift_source", "customers")
+        assert stored is not None
+        assert {c.name for c in stored} == {"id", "name"}
+        assert next(x["schema_drift"] for x in w.status.snapshot()["workers"] if x["source"] == "drift_source") is None
+
+    def test_no_drift_when_schema_unchanged(self):
+        from core.schema_store import SchemaStore
+
+        cols = [("id", "integer"), ("name", "text")]
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema(cols))
+        w = _make_worker(src, _DriftMockSink(), ss)
+        w._check_schema_drift()  # seed
+        w._check_schema_drift()  # second call — no change
+
+        drift = next(x["schema_drift"] for x in w.status.snapshot()["workers"] if x["source"] == "drift_source")
+        assert drift is None
+
+    def test_column_added_detected(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer"), ("name", "text")]))
+        w = _make_worker(src, _DriftMockSink(), ss)
+        w._check_schema_drift()  # seed
+
+        src._schema = self._schema([("id", "integer"), ("name", "text"), ("email", "text")])
+        w._check_schema_drift()
+
+        drift = next(x["schema_drift"] for x in w.status.snapshot()["workers"] if x["source"] == "drift_source")
+        assert drift is not None
+        assert "email" in drift
+
+    def test_column_removed_detected(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer"), ("name", "text"), ("score", "float")]))
+        w = _make_worker(src, _DriftMockSink(), ss)
+        w._check_schema_drift()  # seed
+
+        src._schema = self._schema([("id", "integer"), ("name", "text")])
+        w._check_schema_drift()
+
+        drift = next(x["schema_drift"] for x in w.status.snapshot()["workers"] if x["source"] == "drift_source")
+        assert drift is not None
+        assert "score" in drift
+
+    def test_type_change_detected(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer"), ("score", "integer")]))
+        w = _make_worker(src, _DriftMockSink(), ss)
+        w._check_schema_drift()
+
+        src._schema = self._schema([("id", "integer"), ("score", "float")])
+        w._check_schema_drift()
+
+        drift = next(x["schema_drift"] for x in w.status.snapshot()["workers"] if x["source"] == "drift_source")
+        assert drift is not None
+        assert "type change" in drift.lower() or "~" in drift
+
+    def test_drift_action_pause_sets_stop_flag(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer")]))
+        w = _make_worker(src, _DriftMockSink(), ss, drift_action="pause")
+        w._check_schema_drift()  # seed
+
+        src._schema = self._schema([("id", "integer"), ("new_col", "text")])
+        w._check_schema_drift()
+
+        assert w._stop_flag.is_set(), "pause action should set stop_flag"
+
+    def test_drift_action_auto_migrate_calls_evolve_schema(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer")]))
+        sink = _DriftMockSink()
+        w = _make_worker(src, sink, ss, drift_action="auto_migrate")
+        w._check_schema_drift()  # seed
+
+        src._schema = self._schema([("id", "integer"), ("added_col", "text")])
+        w._check_schema_drift()
+
+        assert len(sink.evolved) == 1
+        assert sink.evolved[0][0] == "customers"
+
+    def test_drift_action_alert_does_not_pause(self):
+        from core.schema_store import SchemaStore
+
+        ss = SchemaStore(":memory:")
+        src = _DriftMockSource(self._schema([("id", "integer")]))
+        w = _make_worker(src, _DriftMockSink(), ss, drift_action="alert")
+        w._check_schema_drift()  # seed
+
+        src._schema = self._schema([("id", "integer"), ("extra", "text")])
+        w._check_schema_drift()
+
+        assert not w._stop_flag.is_set(), "alert action should not stop the worker"
+
+    def test_get_schema_exception_does_not_crash(self):
+        from core.schema_store import SchemaStore
+
+        class _ErrorSource:
+            name = "err_src"
+            def get_schema(self, table):
+                raise RuntimeError("DB down")
+
+        ss = SchemaStore(":memory:")
+        src = _ErrorSource()
+        from core.offset_store import SQLiteOffsetStore
+        from core.status_store import StatusStore
+        from core.engine import TableWorker
+        w = TableWorker(
+            source=src,
+            table="t",
+            sink=_DriftMockSink(),
+            offset_store=SQLiteOffsetStore(":memory:"),
+            status_store=StatusStore(),
+            options={"batch_size": 10, "schema_drift_action": "alert"},
+            schema_store=ss,
+        )
+        w._check_schema_drift()  # should not raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 19. CockroachDB CDC source — snapshot + streaming
+# ─────────────────────────────────────────────────────────────────────────────
+
+COCKROACH_CFG = {
+    "connection": {
+        "host": "localhost",
+        "port": 26257,
+        "user": "root",
+        "password": "",
+        "database": "testdb",
+        "sslmode": "disable",
+    }
+}
+
+COCKROACH_SEED = """
+SET CLUSTER SETTING kv.rangefeed.enabled = true;
+CREATE DATABASE IF NOT EXISTS testdb;
+USE testdb;
+CREATE TABLE IF NOT EXISTS customers (
+    id     INT PRIMARY KEY,
+    name   VARCHAR(100),
+    email  VARCHAR(100),
+    score  FLOAT
+);
+CREATE TABLE IF NOT EXISTS orders (
+    id       INT PRIMARY KEY,
+    customer VARCHAR(100),
+    amount   FLOAT,
+    status   VARCHAR(50)
+);
+INSERT INTO customers (id, name, email, score) VALUES
+    (1, 'Alice',   'alice@example.com',   10.0),
+    (2, 'Bob',     'bob@example.com',     20.0),
+    (3, 'Charlie', 'charlie@example.com', 30.0)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO orders (id, customer, amount, status) VALUES
+    (1, 'Alice', 99.99,  'completed'),
+    (2, 'Bob',   149.50, 'pending'),
+    (3, 'Alice', 25.00,  'completed')
+ON CONFLICT (id) DO NOTHING;
+GRANT CHANGEFEED ON TABLE customers TO root;
+GRANT CHANGEFEED ON TABLE orders    TO root;
+"""
+
+
+@pytest.mark.cockroachdb
+class TestCockroachDBSource(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        import psycopg2
+
+        # Wait for CockroachDB to be ready, then create testdb + seed tables.
+        # psycopg2 doesn't support USE <db>, so we connect to defaultdb first to
+        # create testdb, then reconnect to testdb for table creation.
+        for attempt in range(30):
+            try:
+                # Phase 1: create testdb and enable rangefeeds (in defaultdb)
+                conn = psycopg2.connect(
+                    host="localhost", port=26257, user="root",
+                    password="", dbname="defaultdb", sslmode="disable",
+                )
+                conn.autocommit = True
+                cur = conn.cursor()
+                for stmt in [
+                    "SET CLUSTER SETTING kv.rangefeed.enabled = true",
+                    "CREATE DATABASE IF NOT EXISTS testdb",
+                ]:
+                    try:
+                        cur.execute(stmt)
+                    except Exception:
+                        pass
+                cur.close()
+                conn.close()
+
+                # Phase 2: create tables and seed rows (in testdb)
+                conn2 = psycopg2.connect(
+                    host="localhost", port=26257, user="root",
+                    password="", dbname="testdb", sslmode="disable",
+                )
+                conn2.autocommit = True
+                cur2 = conn2.cursor()
+                for stmt in [
+                    """CREATE TABLE IF NOT EXISTS customers (
+                        id INT PRIMARY KEY, name VARCHAR(100),
+                        email VARCHAR(100), score FLOAT)""",
+                    """CREATE TABLE IF NOT EXISTS orders (
+                        id INT PRIMARY KEY, customer VARCHAR(100),
+                        amount FLOAT, status VARCHAR(50))""",
+                    """INSERT INTO customers (id, name, email, score) VALUES
+                        (1,'Alice','alice@example.com',10.0),
+                        (2,'Bob','bob@example.com',20.0),
+                        (3,'Charlie','charlie@example.com',30.0)
+                        ON CONFLICT (id) DO NOTHING""",
+                    """INSERT INTO orders (id, customer, amount, status) VALUES
+                        (1,'Alice',99.99,'completed'),
+                        (2,'Bob',149.50,'pending'),
+                        (3,'Alice',25.00,'completed')
+                        ON CONFLICT (id) DO NOTHING""",
+                    "GRANT CHANGEFEED ON TABLE customers TO root",
+                    "GRANT CHANGEFEED ON TABLE orders TO root",
+                ]:
+                    try:
+                        cur2.execute(stmt)
+                    except Exception:
+                        pass
+                cur2.close()
+                conn2.close()
+                break
+            except Exception:
+                time.sleep(2)
+        else:
+            raise RuntimeError("CockroachDB not ready after 60s")
+
+        from sources.cockroachdb import CockroachDBSource
+        cls.src = CockroachDBSource("crdb_test", COCKROACH_CFG)
+        cls.src.connect()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.src.close()
+
+    def _dml_conn(self):
+        import psycopg2
+        conn = psycopg2.connect(
+            host="localhost", port=26257, user="root",
+            password="", dbname="testdb", sslmode="disable",
+        )
+        conn.autocommit = True
+        return conn
+
+    def test_get_schema_customers(self):
+        schema = self.src.get_schema("customers")
+        names = [c.name for c in schema]
+        assert "id" in names
+        assert "name" in names
+        assert "email" in names
+
+    def test_snapshot_customers(self):
+        rows = list(self.src.snapshot("customers"))
+        assert len(rows) >= 3
+        assert all(e.op == Operation.SNAPSHOT for e in rows)
+        names = {e.after["name"] for e in rows}
+        assert "Alice" in names
+
+    def test_snapshot_orders(self):
+        rows = list(self.src.snapshot("orders"))
+        assert len(rows) >= 3
+        assert all(e.op == Operation.SNAPSHOT for e in rows)
+
+    def test_incremental_snapshot_chunk(self):
+        rows = list(self.src.snapshot("customers"))
+        assert len(rows) >= 1
+
+    def test_streaming_captures_insert(self):
+        # Reset stream state (delete test may have set stop_flag)
+        self.src._stop_flag.clear()
+        self.src._stream_thread = None
+        self.src._table_queues.clear()
+
+        captured = []
+        stop = threading.Event()
+
+        def _stream():
+            for ev in self.src.stream("customers", None):
+                captured.append(ev)
+                if stop.is_set():
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(2)  # let changefeed start
+
+        conn = self._dml_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM customers WHERE id = 101")
+        cur.execute(
+            "INSERT INTO customers (id, name, email, score) VALUES (101, 'Dave', 'dave@test.com', 5.0)"
+        )
+        conn.close()
+
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if any(e.after and e.after.get("name") == "Dave" for e in captured):
+                break
+            time.sleep(0.5)
+
+        stop.set()
+        self.src._stop_flag.set()
+        t.join(timeout=3)
+
+        assert any(e.after and e.after.get("name") == "Dave" for e in captured), \
+            "Expected INSERT event for Dave from CockroachDB changefeed"
+
+    def test_streaming_captures_delete(self):
+        # Reset stop_flag for a fresh stream
+        self.src._stop_flag.clear()
+        self.src._stream_thread = None
+        self.src._table_queues.clear()
+
+        captured = []
+        stop = threading.Event()
+
+        # Ensure row 102 exists first
+        conn = self._dml_conn()
+        conn.cursor().execute(
+            "INSERT INTO customers (id, name, email, score) VALUES (102, 'Eve', 'eve@test.com', 7.0)"
+            " ON CONFLICT (id) DO NOTHING"
+        )
+        conn.close()
+
+        def _stream():
+            for ev in self.src.stream("customers", None):
+                captured.append(ev)
+                if stop.is_set():
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(2)
+
+        conn = self._dml_conn()
+        conn.cursor().execute("DELETE FROM customers WHERE id = 102")
+        conn.close()
+
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if any(e.op == Operation.DELETE for e in captured):
+                break
+            time.sleep(0.5)
+
+        stop.set()
+        self.src._stop_flag.set()
+        t.join(timeout=3)
+
+        assert any(e.op == Operation.DELETE for e in captured), \
+            "Expected DELETE event from CockroachDB changefeed"

@@ -90,6 +90,19 @@ services:
       \"if(db.customers.countDocuments()==0){db.customers.insertMany([{name:'Alice',email:'alice@example.com',score:10.0},{name:'Bob',email:'bob@example.com',score:20.0},{name:'Charlie',email:'charlie@example.com',score:30.0}]);db.orders.insertMany([{customer:'Alice',amount:99.99,status:'completed'},{customer:'Bob',amount:149.50,status:'pending'},{customer:'Alice',amount:25.00,status:'completed'}]);}\""
     restart: "no"
 
+  cockroachdb:
+    image: cockroachdb/cockroach:v23.2.3
+    command: start-single-node --insecure --advertise-addr=localhost
+    ports:
+      - "26257:26257"
+    volumes:
+      - cockroach_data:/cockroach/cockroach-data
+    healthcheck:
+      test: ["CMD", "cockroach", "sql", "--insecure", "-e", "SELECT 1"]
+      interval: 10s
+      retries: 10
+      start_period: 20s
+
   localstack:
     image: localstack/localstack:3
     ports:
@@ -226,6 +239,7 @@ volumes:
   mongo_data:
   sqlserver_data:
   localstack_data:
+  cockroach_data:
   oracle_data:
   debezium_oracle_data:
   # debezium_sqlserver_data:

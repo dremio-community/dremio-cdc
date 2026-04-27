@@ -1,21 +1,26 @@
 """
 CockroachDB source — uses EXPERIMENTAL CHANGEFEED to stream DML changes.
 
-CockroachDB is wire-compatible with PostgreSQL (psycopg2 works), but uses
-its own changefeed mechanism rather than Postgres logical replication.
+CockroachDB is wire-compatible with PostgreSQL (psycopg2 works for schema
+introspection and snapshots), but EXPERIMENTAL CHANGEFEED returns an infinite
+streaming result set that blocks psycopg2's execute().  The changefeed thread
+therefore uses asyncpg (non-blocking async driver) via asyncio.run_until_complete
+in a dedicated thread.
 
-The EXPERIMENTAL CHANGEFEED statement returns an infinite result set;
-each row is a (table, key_json, value_json) tuple where value_json contains
-{"after": {...}, "updated": "<timestamp>"} or null for deletes.
+Each changefeed row is a (table, key_bytes, value_bytes) tuple where value_bytes
+is a JSON-encoded object: {"after": {...}, "updated": "<timestamp>"} for inserts/
+updates, or {"after": null, "updated": "..."} for deletes.
 
 Setup (grant required privileges):
     GRANT SELECT ON TABLE <table> TO <user>;
     GRANT CHANGEFEED ON TABLE <table> TO <user>;
+    SET CLUSTER SETTING kv.rangefeed.enabled = true;
 
-Requires: pip install psycopg2-binary
+Requires: pip install psycopg2-binary asyncpg
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -23,6 +28,7 @@ import queue
 from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 
+import asyncpg
 import psycopg2
 import psycopg2.extras
 
@@ -58,25 +64,27 @@ class CockroachDBSource(CDCSource):
 
     def get_schema(self, table: str) -> List[ColumnSchema]:
         schema_name, table_name = _split(table)
+        pks = set(self._get_pks(table))
         with self._snap_conn.cursor() as cur:
             cur.execute(
                 "SELECT column_name, data_type FROM information_schema.columns "
                 "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
                 (schema_name, table_name),
             )
-            return [ColumnSchema(r[0], r[1]) for r in cur.fetchall()]
+            return [
+                ColumnSchema(r[0], r[1], primary_key=(r[0] in pks))
+                for r in cur.fetchall()
+            ]
 
     def snapshot(self, table: str) -> Generator[ChangeEvent, None, None]:
         schema = self.get_schema(table)
         col_names = [c.name for c in schema]
         schema_name, table_name = _split(table)
-        pks = self._get_pks(table)
 
         with self._snap_conn.cursor() as cur:
             col_list = ", ".join(f'"{c}"' for c in col_names)
             cur.execute(
-                f'SELECT {col_list} '
-                f'FROM "{schema_name}"."{table_name}" AS OF SYSTEM TIME follower_read_timestamp()'
+                f'SELECT {col_list} FROM "{schema_name}"."{table_name}"'
             )
             while True:
                 rows = cur.fetchmany(2000)
@@ -87,10 +95,11 @@ class CockroachDBSource(CDCSource):
                         op=Operation.SNAPSHOT,
                         source_name=self.name,
                         source_table=table,
-                        schema=schema,
-                        primary_keys=pks,
-                        after=dict(zip(col_names, row)),
                         before=None,
+                        after=dict(zip(col_names, row)),
+                        schema=schema,
+                        timestamp=datetime.now(timezone.utc),
+                        offset=None,
                     )
 
     def stream(self, table: str, offset: Optional[Any]) -> Generator[ChangeEvent, None, None]:
@@ -117,16 +126,26 @@ class CockroachDBSource(CDCSource):
                 continue
 
     def _run_changefeed(self, tables: List[str], cursor: Optional[str]):
-        """Background thread: runs EXPERIMENTAL CHANGEFEED and fans events to per-table queues."""
-        conn = psycopg2.connect(
+        """Background thread: runs EXPERIMENTAL CHANGEFEED via asyncpg (non-blocking)."""
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self._async_changefeed(tables, cursor))
+        except Exception as exc:
+            logger.error("CockroachDB changefeed thread error: %s", exc)
+        finally:
+            loop.close()
+
+    async def _async_changefeed(self, tables: List[str], cursor: Optional[str]):
+        """Async coroutine: connects with asyncpg and iterates the changefeed cursor."""
+        ssl = self._conn_cfg.get("sslmode", "disable")
+        conn = await asyncpg.connect(
             host=self._conn_cfg.get("host", "localhost"),
             port=int(self._conn_cfg.get("port", 26257)),
-            dbname=self._conn_cfg["database"],
+            database=self._conn_cfg["database"],
             user=self._conn_cfg["user"],
-            password=self._conn_cfg.get("password", ""),
-            sslmode=self._conn_cfg.get("sslmode", "disable"),
+            password=self._conn_cfg.get("password", "") or None,
+            ssl=(ssl not in ("disable", "allow")),
         )
-        conn.autocommit = True
 
         table_list = ", ".join(
             f'"{_split(t)[0]}"."{_split(t)[1]}"' for t in tables
@@ -134,25 +153,34 @@ class CockroachDBSource(CDCSource):
         cursor_clause = f", cursor='{cursor}'" if cursor else ""
         sql = (
             f"EXPERIMENTAL CHANGEFEED FOR {table_list} "
-            f"WITH updated, resolved='10s'{cursor_clause}"
+            f"WITH updated, resolved='5s'{cursor_clause}"
         )
         logger.info("Starting CockroachDB changefeed: %s", sql)
 
         try:
-            cur = conn.cursor()
-            cur.execute(sql)
-            for row in cur:
-                if self._stop_flag.is_set():
-                    break
-                tbl_name, key_json, value_json = row[0], row[1], row[2]
-                if value_json is None:
-                    # Resolved timestamp heartbeat — ignore
-                    continue
-                self._dispatch(tbl_name, key_json, value_json)
+            async with conn.transaction():
+                async for record in conn.cursor(sql, prefetch=1):
+                    if self._stop_flag.is_set():
+                        break
+                    # record: (table_name, key_bytes, value_bytes)
+                    tbl_name = record[0]
+                    key_raw  = record[1]
+                    val_raw  = record[2]
+
+                    if tbl_name is None:
+                        continue  # resolved timestamp heartbeat
+
+                    # Decode bytes → str for JSON parsing
+                    key_str = key_raw.decode() if isinstance(key_raw, (bytes, bytearray)) else key_raw
+                    val_str = val_raw.decode() if isinstance(val_raw, (bytes, bytearray)) else val_raw
+                    if val_str is None:
+                        continue
+
+                    self._dispatch(tbl_name, key_str, val_str)
         except Exception as exc:
             logger.error("CockroachDB changefeed error: %s", exc)
         finally:
-            conn.close()
+            await conn.close()
 
     def _dispatch(self, tbl_name: str, key_json: str, value_json: str):
         """Parse a changefeed row and put it on the right table queue."""
@@ -191,10 +219,10 @@ class CockroachDBSource(CDCSource):
                 op=op,
                 source_name=self.name,
                 source_table=target_key,
-                schema=schema,
-                primary_keys=pks,
-                after=after,
                 before=before if op == Operation.DELETE else None,
+                after=after,
+                schema=schema,
+                timestamp=ts,
                 offset=ts_str,
             )
             q.put_nowait(event)
