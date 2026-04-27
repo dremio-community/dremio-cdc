@@ -271,6 +271,20 @@ class IcebergSink:
 
         self._known_tables.add(source_table)
 
+    def _evolve_schema(self, source_table: str, schema: List[ColumnSchema]):
+        """Add any new columns to an existing Iceberg table's schema."""
+        identifier = self._table_identifier(source_table)
+        table = self._catalog.load_table(identifier)
+        existing = {f.name for f in table.schema().fields}
+        all_cols = list(schema) + _CDC_META
+        new_cols = [c for c in all_cols if c.name not in existing]
+        if not new_cols:
+            return
+        with table.update_schema() as upd:
+            for col in new_cols:
+                upd.add_column(path=col.name, field_type=_iceberg_type(col.data_type))
+        logger.info("Evolved Iceberg schema for %s: added %s", source_table, [c.name for c in new_cols])
+
     def _to_arrow(self, rows: List[Dict], schema: List[ColumnSchema]) -> "pyarrow.Table":
         import pyarrow as pa
 
@@ -309,6 +323,7 @@ class IcebergSink:
             pks    = tevents[0].primary_keys
 
             self._ensure_table(source_table, schema)
+            self._evolve_schema(source_table, schema)
             identifier = self._table_identifier(source_table)
             table = self._catalog.load_table(identifier)
 

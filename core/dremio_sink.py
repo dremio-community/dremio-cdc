@@ -173,7 +173,9 @@ class DremioSink:
         )
         ddl = f"CREATE TABLE IF NOT EXISTS {_quote_table(path)} (\n  {col_defs}\n)"
         self._sql(ddl)
-        self._known_schemas[source_table] = [c.name for c in cols]
+        # Only seed known_schemas on first encounter; evolve_schema handles additions
+        if source_table not in self._known_schemas:
+            self._known_schemas[source_table] = [c.name for c in cols]
         logger.info("Ensured table %s", path)
 
     def evolve_schema(self, source_table: str, schema: List[ColumnSchema]):
@@ -182,7 +184,7 @@ class DremioSink:
         path = self._target_path(source_table)
         for col in schema:
             if col.name not in known:
-                ddl = f"ALTER TABLE {_quote_table(path)} ADD COLUMN {_quote(col.name)} {_dremio_type(col.data_type)}"
+                ddl = f"ALTER TABLE {_quote_table(path)} ADD COLUMNS ({_quote(col.name)} {_dremio_type(col.data_type)})"
                 try:
                     self._sql(ddl)
                     known.add(col.name)
@@ -240,14 +242,15 @@ class DremioSink:
             row = dict(ev.after or {})
             row["_cdc_op"]     = ev.op.value
             row["_cdc_source"] = ev.source_name
-            row["_cdc_ts"]     = ev.timestamp.isoformat()
+            row["_cdc_ts"]     = ev.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
             vals = ", ".join(self._escape(row.get(c)) for c in all_cols)
             rows.append(f"({vals})")
 
         values_sql = ",\n  ".join(rows)
-        on_clause = " AND ".join(f"t.{_quote(pk)} = s.{_quote(pk)}" for pk in pks)
+        # Dremio MERGE: ON clause uses unquoted alias.col; UPDATE SET omits table alias.
+        on_clause = " AND ".join(f't.{pk} = s.{pk}' for pk in pks)
         update_set = ", ".join(
-            f"t.{_quote(c)} = s.{_quote(c)}"
+            f'{_quote(c)} = s.{_quote(c)}'
             for c in all_cols if c not in pks
         )
         insert_cols = col_list
@@ -274,7 +277,7 @@ WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
             row = dict(ev.after or {})
             row["_cdc_op"]     = ev.op.value
             row["_cdc_source"] = ev.source_name
-            row["_cdc_ts"]     = ev.timestamp.isoformat()
+            row["_cdc_ts"]     = ev.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
             vals = ", ".join(self._escape(row.get(c)) for c in all_cols)
             self._sql(f"INSERT INTO {path} ({col_list}) VALUES ({vals})")
 

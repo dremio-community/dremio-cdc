@@ -56,7 +56,7 @@ def _cloud_sql(sql: str) -> dict:
         jr.raise_for_status()
         state = jr.json().get("jobState", "")
         if state == "COMPLETED":
-            return jr.json()
+            return {**jr.json(), "id": job_id}
         if state in ("FAILED", "CANCELED", "CANCELLED"):
             raise RuntimeError(f"Cloud SQL job {state}: {jr.json().get('errorMessage','')}")
     raise TimeoutError("Cloud SQL job timed out")
@@ -3300,3 +3300,592 @@ class TestCockroachDBSource(unittest.TestCase):
 
         assert any(e.op == Operation.DELETE for e in captured), \
             "Expected DELETE event from CockroachDB changefeed"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 20. Dremio MERGE / DELETE correctness — Dremio Cloud
+#     Verifies that the right rows land with the right values after each DML op.
+#     Uses the same Cloud PAT / project as the other @pytest.mark.cloud tests.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DREMIO_CLOUD_SINK_CFG = {
+    "host": "api.dremio.cloud", "port": 443, "ssl": True,
+    "pat": DREMIO_CLOUD_PAT, "project_id": DREMIO_CLOUD_PROJECT,
+    "target_namespace": "cdc_demo",
+}
+
+_MERGE_SCHEMA = [
+    ColumnSchema("id",    "bigint",  nullable=False, primary_key=True),
+    ColumnSchema("name",  "varchar", nullable=True,  primary_key=False),
+    ColumnSchema("score", "double",  nullable=True,  primary_key=False),
+]
+
+
+def _sink_sql(sql: str) -> dict:
+    """Submit and poll a SQL job against Dremio Cloud."""
+    return _cloud_sql(sql)
+
+
+def _sink_query(sql: str) -> list:
+    """Run a SELECT against Dremio Cloud and return rows as list-of-dicts."""
+    result = _cloud_sql(sql)
+    rr = requests.get(
+        f"https://api.dremio.cloud/v0/projects/{DREMIO_CLOUD_PROJECT}"
+        f"/job/{result['id']}/results?offset=0&limit=500",
+        headers={"Authorization": f"Bearer {DREMIO_CLOUD_PAT}"},
+        timeout=15,
+    )
+    rr.raise_for_status()
+    data = rr.json()
+    rows = data.get("rows", [])
+    if not rows or isinstance(rows[0], dict):
+        return rows
+    cols = [c["name"] for c in data.get("schema", [])]
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def _make_ev(op, id_, name, score, *, before=None, source_table="public.customers"):
+    return ChangeEvent(
+        op=op,
+        source_name="test_src",
+        source_table=source_table,
+        before=before,
+        after={"id": id_, "name": name, "score": score} if op != Operation.DELETE else None,
+        schema=_MERGE_SCHEMA,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        offset=None,
+    )
+
+
+@pytest.mark.cloud
+class TestDremioMergeCorrectness(unittest.TestCase):
+    """Verify MERGE / DELETE correctness against Dremio Cloud.
+
+    Uses the same project/PAT as other @pytest.mark.cloud tests.
+    Tables are created in the cdc_demo catalog.
+    Each test uses a unique table name to avoid cross-test pollution.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from core.dremio_sink import DremioSink
+        cls.sink = DremioSink(_DREMIO_CLOUD_SINK_CFG)
+        cls.sink.connect()
+
+    def _table(self, suffix: str) -> str:
+        return f"merge_test_{suffix}"
+
+    def _drop(self, table: str):
+        try:
+            _sink_sql(f'DROP TABLE IF EXISTS "cdc_demo"."{table}"')
+        except Exception:
+            pass
+
+    def _rows(self, table: str) -> list:
+        return _sink_query(
+            f'SELECT * FROM "cdc_demo"."{table}" ORDER BY "id"'
+        )
+
+    # ── INSERT (SNAPSHOT) ──────────────────────────────────────────────────────
+
+    def test_snapshot_inserts_correct_values(self):
+        tbl = self._table("snap")
+        self._drop(tbl)
+        try:
+            events = [
+                _make_ev(Operation.SNAPSHOT, 1, "Alice", 10.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 2, "Bob",   20.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 3, "Charlie", 30.0, source_table=tbl),
+            ]
+            self.sink.write_batch(events)
+            rows = self._rows(tbl)
+            assert len(rows) == 3
+            names = {r["name"] for r in rows}
+            assert names == {"Alice", "Bob", "Charlie"}
+            scores = {r["id"]: r["score"] for r in rows}
+            assert scores[1] == 10.0
+            assert scores[2] == 20.0
+            assert scores[3] == 30.0
+        finally:
+            self._drop(tbl)
+
+    # ── UPDATE via MERGE ───────────────────────────────────────────────────────
+
+    def test_update_changes_correct_row(self):
+        tbl = self._table("upd")
+        self._drop(tbl)
+        try:
+            # Seed three rows
+            seed = [
+                _make_ev(Operation.SNAPSHOT, 1, "Alice",   10.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 2, "Bob",     20.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 3, "Charlie", 30.0, source_table=tbl),
+            ]
+            self.sink.write_batch(seed)
+
+            # Update only id=2
+            upd = [_make_ev(Operation.UPDATE, 2, "Bobby", 99.0, source_table=tbl)]
+            self.sink.write_batch(upd)
+
+            rows = {r["id"]: r for r in self._rows(tbl)}
+            assert rows[1]["name"] == "Alice"   # unchanged
+            assert rows[2]["name"] == "Bobby"   # updated
+            assert rows[2]["score"] == 99.0     # updated
+            assert rows[3]["name"] == "Charlie" # unchanged
+        finally:
+            self._drop(tbl)
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+
+    def test_delete_removes_correct_row(self):
+        tbl = self._table("del")
+        self._drop(tbl)
+        try:
+            seed = [
+                _make_ev(Operation.SNAPSHOT, 1, "Alice",   10.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 2, "Bob",     20.0, source_table=tbl),
+                _make_ev(Operation.SNAPSHOT, 3, "Charlie", 30.0, source_table=tbl),
+            ]
+            self.sink.write_batch(seed)
+
+            del_ev = _make_ev(Operation.DELETE, 2, None, None,
+                              before={"id": 2, "name": "Bob", "score": 20.0},
+                              source_table=tbl)
+            self.sink.write_batch([del_ev])
+
+            rows = self._rows(tbl)
+            ids = {r["id"] for r in rows}
+            assert 2 not in ids, "Deleted row should be gone"
+            assert ids == {1, 3}
+        finally:
+            self._drop(tbl)
+
+    # ── MERGE idempotency (re-inserting same PK updates, not duplicates) ───────
+
+    def test_merge_is_idempotent(self):
+        tbl = self._table("idem")
+        self._drop(tbl)
+        try:
+            ev = _make_ev(Operation.SNAPSHOT, 1, "Alice", 10.0, source_table=tbl)
+            self.sink.write_batch([ev])
+            self.sink.write_batch([ev])  # write same row twice
+            rows = self._rows(tbl)
+            assert len(rows) == 1, "Re-inserting same PK should not create duplicate"
+        finally:
+            self._drop(tbl)
+
+    # ── CDC metadata columns ──────────────────────────────────────────────────
+
+    def test_cdc_metadata_columns_present(self):
+        tbl = self._table("meta")
+        self._drop(tbl)
+        try:
+            ev = _make_ev(Operation.INSERT, 1, "Alice", 10.0, source_table=tbl)
+            self.sink.write_batch([ev])
+            rows = self._rows(tbl)
+            assert len(rows) == 1
+            row = rows[0]
+            assert "_cdc_op" in row
+            assert "_cdc_source" in row
+            assert "_cdc_ts" in row
+            assert row["_cdc_op"] == "insert"
+            assert row["_cdc_source"] == "test_src"
+        finally:
+            self._drop(tbl)
+
+    # ── DELETE with NULL before-image is silently skipped ────────────────────
+
+    def test_delete_without_before_image_skipped(self):
+        tbl = self._table("delnobefore")
+        self._drop(tbl)
+        try:
+            seed = [_make_ev(Operation.SNAPSHOT, 1, "Alice", 10.0, source_table=tbl)]
+            self.sink.write_batch(seed)
+
+            del_ev = ChangeEvent(
+                op=Operation.DELETE,
+                source_name="test_src",
+                source_table=tbl,
+                before=None,  # no before-image
+                after=None,
+                schema=_MERGE_SCHEMA,
+                timestamp=datetime.datetime.now(datetime.timezone.utc),
+                offset=None,
+            )
+            self.sink.write_batch([del_ev])  # should not raise
+
+            rows = self._rows(tbl)
+            assert len(rows) == 1, "Row should still exist when no before-image"
+        finally:
+            self._drop(tbl)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 21. Schema evolution (ALTER TABLE ADD COLUMN) — Dremio Cloud
+#     Verifies that new source columns are added via ALTER TABLE and that
+#     newly written rows carry the new column values.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.cloud
+class TestDremioSchemaEvolution(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        from core.dremio_sink import DremioSink
+        cls.sink = DremioSink(_DREMIO_CLOUD_SINK_CFG)
+        cls.sink.connect()
+
+    def _drop(self, table: str):
+        try:
+            _sink_sql(f'DROP TABLE IF EXISTS "cdc_demo"."{table}"')
+        except Exception:
+            pass
+
+    def _rows(self, table: str) -> list:
+        return _sink_query(
+            f'SELECT * FROM "cdc_demo"."{table}" ORDER BY "id"'
+        )
+
+    def test_alter_table_adds_new_column(self):
+        """Write events with schema_v1, then events with schema_v2 (extra column).
+        Verify ALTER TABLE added the column and new rows carry the new value."""
+        tbl = "schema_evo_alter"
+        self._drop(tbl)
+        try:
+            schema_v1 = [
+                ColumnSchema("id",   "bigint",  nullable=False, primary_key=True),
+                ColumnSchema("name", "varchar", nullable=True,  primary_key=False),
+            ]
+            schema_v2 = schema_v1 + [
+                ColumnSchema("email", "varchar", nullable=True, primary_key=False),
+            ]
+
+            # Phase 1: write with original schema
+            ev1 = ChangeEvent(
+                op=Operation.SNAPSHOT, source_name="test_src", source_table=tbl,
+                before=None, after={"id": 1, "name": "Alice"},
+                schema=schema_v1,
+                timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+            )
+            self.sink.write_batch([ev1])
+
+            # Phase 2: write with evolved schema (new email column)
+            ev2 = ChangeEvent(
+                op=Operation.INSERT, source_name="test_src", source_table=tbl,
+                before=None, after={"id": 2, "name": "Bob", "email": "bob@example.com"},
+                schema=schema_v2,
+                timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+            )
+            self.sink.write_batch([ev2])
+
+            rows = {r["id"]: r for r in self._rows(tbl)}
+            assert len(rows) == 2
+            assert "email" in rows[2], "ALTER TABLE should have added email column"
+            assert rows[2]["email"] == "bob@example.com"
+            # Row 1 was written before the column existed — value should be NULL
+            assert rows[1].get("email") is None or rows[1].get("email") == ""
+        finally:
+            self._drop(tbl)
+
+    def test_multiple_columns_added_in_sequence(self):
+        """Add two new columns in two separate batches."""
+        tbl = "schema_evo_multi"
+        self._drop(tbl)
+        try:
+            schema_v1 = [ColumnSchema("id", "bigint", nullable=False, primary_key=True),
+                         ColumnSchema("name", "varchar", nullable=True, primary_key=False)]
+            schema_v2 = schema_v1 + [ColumnSchema("email", "varchar", nullable=True, primary_key=False)]
+            schema_v3 = schema_v2 + [ColumnSchema("phone", "varchar", nullable=True, primary_key=False)]
+
+            def _ev(schema, id_, **kw):
+                return ChangeEvent(
+                    op=Operation.INSERT, source_name="test_src", source_table=tbl,
+                    before=None, after={"id": id_, **kw},
+                    schema=schema,
+                    timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+                )
+
+            self.sink.write_batch([_ev(schema_v1, 1, name="Alice")])
+            self.sink.write_batch([_ev(schema_v2, 2, name="Bob", email="bob@test.com")])
+            self.sink.write_batch([_ev(schema_v3, 3, name="Carol", email="carol@test.com", phone="555-1234")])
+
+            rows = {r["id"]: r for r in self._rows(tbl)}
+            assert "email" in rows[3]
+            assert "phone" in rows[3]
+            assert rows[3]["email"] == "carol@test.com"
+            assert rows[3]["phone"] == "555-1234"
+        finally:
+            self._drop(tbl)
+
+    def test_auto_migrate_via_engine(self):
+        """End-to-end: engine detects schema drift and calls sink.evolve_schema()."""
+        from core.schema_store import SchemaStore
+        from core.status_store import StatusStore
+        from core.offset_store import SQLiteOffsetStore
+        from core.engine import TableWorker
+        from core.dremio_sink import DremioSink
+
+        tbl = "schema_evo_engine"
+        self._drop(tbl)
+        try:
+            sink = DremioSink(_DREMIO_CLOUD_SINK_CFG)
+            sink.connect()
+
+            schema_v1 = [ColumnSchema("id",   "bigint",  nullable=False, primary_key=True),
+                         ColumnSchema("name",  "varchar", nullable=True,  primary_key=False)]
+            schema_v2 = schema_v1 + [ColumnSchema("score", "double", nullable=True, primary_key=False)]
+
+            # Seed the schema store with v1 so the worker sees v2 as drift
+            ss = SchemaStore(":memory:")
+            ss.set("engine_src", tbl, schema_v1)
+
+            class _StaticSource:
+                name = "engine_src"
+                def get_schema(self, table):
+                    return list(schema_v2)
+
+            w = TableWorker(
+                source=_StaticSource(),
+                table=tbl,
+                sink=sink,
+                offset_store=SQLiteOffsetStore(":memory:"),
+                status_store=StatusStore(),
+                options={"batch_size": 10, "schema_drift_action": "auto_migrate"},
+                schema_store=ss,
+            )
+
+            # Ensure table with v1 schema first
+            sink.ensure_table(tbl, schema_v1)
+
+            # Write a row with v2 schema (triggers evolve_schema via write_batch)
+            ev = ChangeEvent(
+                op=Operation.INSERT, source_name="engine_src", source_table=tbl,
+                before=None, after={"id": 1, "name": "Alice", "score": 42.0},
+                schema=schema_v2,
+                timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+            )
+            sink.write_batch([ev])
+
+            # Also trigger the drift check
+            w._check_schema_drift()
+
+            rows = {r["id"]: r for r in self._rows(tbl)}
+            assert len(rows) == 1
+            assert "score" in rows[1], "score column should exist after schema evolution"
+            assert rows[1]["score"] == 42.0
+        finally:
+            self._drop(tbl)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 22. Iceberg merge deduplication against Dremio Cloud catalog
+#     Verifies INSERT, UPDATE, DELETE, and deduplication against the real
+#     Dremio Cloud Iceberg REST catalog.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.cloud
+class TestIcebergCloudDeduplication(unittest.TestCase):
+    """Run Iceberg merge deduplication tests against the real Dremio Cloud catalog."""
+
+    @classmethod
+    def setUpClass(cls):
+        from core.iceberg_sink import IcebergSink
+        dremio_cfg = {
+            "host": "api.dremio.cloud", "port": 443, "ssl": True,
+            "pat": DREMIO_CLOUD_PAT, "project_id": DREMIO_CLOUD_PROJECT,
+        }
+        cls.sink = IcebergSink(ICEBERG_CLOUD, dremio_cfg)
+        cls.sink.connect()
+
+    def _make_schema(self):
+        return [
+            ColumnSchema("id",    "bigint",  nullable=False, primary_key=True),
+            ColumnSchema("name",  "varchar", nullable=True,  primary_key=False),
+            ColumnSchema("score", "double",  nullable=True,  primary_key=False),
+        ]
+
+    def _ev(self, op, id_, name, score, *, before=None, source_table="cloud_dedup_test.customers"):
+        return ChangeEvent(
+            op=op,
+            source_name="cloud_test",
+            source_table=source_table,
+            before=before,
+            after={"id": id_, "name": name, "score": score} if op != Operation.DELETE else None,
+            schema=self._make_schema(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        )
+
+    def _cloud_count(self, table_fqn: str) -> int:
+        result = _cloud_sql(f"SELECT COUNT(*) AS cnt FROM {table_fqn}")
+        rr = requests.get(
+            f"https://api.dremio.cloud/v0/projects/{DREMIO_CLOUD_PROJECT}"
+            f"/job/{result['id']}/results?offset=0&limit=1",
+            headers={"Authorization": f"Bearer {DREMIO_CLOUD_PAT}"},
+            timeout=15,
+        )
+        rr.raise_for_status()
+        data = rr.json()
+        rows = data.get("rows", [])
+        if not rows:
+            return 0
+        row = rows[0]
+        return int(row["cnt"] if isinstance(row, dict) else row[0])
+
+    def _cloud_rows(self, table_fqn: str) -> list:
+        result = _cloud_sql(f"SELECT * FROM {table_fqn} ORDER BY id")
+        rr = requests.get(
+            f"https://api.dremio.cloud/v0/projects/{DREMIO_CLOUD_PROJECT}"
+            f"/job/{result['id']}/results?offset=0&limit=500",
+            headers={"Authorization": f"Bearer {DREMIO_CLOUD_PAT}"},
+            timeout=15,
+        )
+        rr.raise_for_status()
+        data = rr.json()
+        rows = data.get("rows", [])
+        if not rows or isinstance(rows[0], dict):
+            return rows
+        cols = [c["name"] for c in data.get("schema", [])]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def _drop_table(self, src_table: str):
+        try:
+            tbl_id = self.sink._table_identifier(src_table)
+            self.sink._catalog.drop_table(tbl_id)
+        except Exception:
+            pass
+
+    def test_snapshot_inserts_all_rows(self):
+        src = "cloud_dedup_test.snap_insert"
+        self._drop_table(src)
+        try:
+            events = [self._ev(Operation.SNAPSHOT, i, f"User{i}", float(i*10), source_table=src)
+                      for i in range(1, 4)]
+            self.sink.write_batch(events)
+            # Give Cloud catalog time to propagate
+            time.sleep(3)
+            ns, tbl = "cdc_e2e_test", "cloud_dedup_test_snap_insert"
+            count = self._cloud_count(f'"{ns}"."{tbl}"')
+            assert count == 3, f"Expected 3 rows, got {count}"
+        finally:
+            self._drop_table(src)
+
+    def test_update_deduplication_last_write_wins(self):
+        """Two updates to the same PK in one batch — only the last value should land."""
+        src = "cloud_dedup_test.dedup_update"
+        self._drop_table(src)
+        try:
+            seed = [self._ev(Operation.SNAPSHOT, 1, "Alice", 10.0, source_table=src)]
+            self.sink.write_batch(seed)
+
+            # Two updates to id=1 in one batch — last write wins
+            upd1 = self._ev(Operation.UPDATE, 1, "Alice_v2", 20.0,
+                            before={"id": 1, "name": "Alice", "score": 10.0}, source_table=src)
+            upd2 = self._ev(Operation.UPDATE, 1, "Alice_v3", 30.0,
+                            before={"id": 1, "name": "Alice_v2", "score": 20.0}, source_table=src)
+            self.sink.write_batch([upd1, upd2])
+
+            time.sleep(3)
+            ns, tbl = "cdc_e2e_test", "cloud_dedup_test_dedup_update"
+            rows = self._cloud_rows(f'"{ns}"."{tbl}"')
+            assert len(rows) == 1
+            assert rows[0]["name"] == "Alice_v3", "Last write should win"
+            assert rows[0]["score"] == 30.0
+        finally:
+            self._drop_table(src)
+
+    def test_delete_removes_row(self):
+        src = "cloud_dedup_test.delete_row"
+        self._drop_table(src)
+        try:
+            seed = [self._ev(Operation.SNAPSHOT, i, f"User{i}", float(i), source_table=src)
+                    for i in range(1, 4)]
+            self.sink.write_batch(seed)
+
+            del_ev = self._ev(
+                Operation.DELETE, 2, None, None,
+                before={"id": 2, "name": "User2", "score": 2.0},
+                source_table=src,
+            )
+            self.sink.write_batch([del_ev])
+
+            time.sleep(3)
+            ns, tbl = "cdc_e2e_test", "cloud_dedup_test_delete_row"
+            rows = self._cloud_rows(f'"{ns}"."{tbl}"')
+            ids = {r["id"] for r in rows}
+            assert 2 not in ids, "Deleted row should not appear"
+            assert ids == {1, 3}
+        finally:
+            self._drop_table(src)
+
+    def test_insert_update_delete_in_sequence(self):
+        """Full lifecycle: insert 3 rows, update 1, delete 1 — verify final state."""
+        src = "cloud_dedup_test.lifecycle"
+        self._drop_table(src)
+        try:
+            # Insert
+            self.sink.write_batch([
+                self._ev(Operation.INSERT, 1, "Alice",   10.0, source_table=src),
+                self._ev(Operation.INSERT, 2, "Bob",     20.0, source_table=src),
+                self._ev(Operation.INSERT, 3, "Charlie", 30.0, source_table=src),
+            ])
+            # Update id=2
+            self.sink.write_batch([
+                self._ev(Operation.UPDATE, 2, "Bobby", 99.0,
+                         before={"id": 2, "name": "Bob", "score": 20.0},
+                         source_table=src),
+            ])
+            # Delete id=3
+            self.sink.write_batch([
+                self._ev(Operation.DELETE, 3, None, None,
+                         before={"id": 3, "name": "Charlie", "score": 30.0},
+                         source_table=src),
+            ])
+
+            time.sleep(3)
+            ns, tbl = "cdc_e2e_test", "cloud_dedup_test_lifecycle"
+            rows = {r["id"]: r for r in self._cloud_rows(f'"{ns}"."{tbl}"')}
+            assert set(rows.keys()) == {1, 2}, f"Expected ids {{1,2}}, got {set(rows.keys())}"
+            assert rows[1]["name"] == "Alice"
+            assert rows[2]["name"] == "Bobby"
+            assert rows[2]["score"] == 99.0
+        finally:
+            self._drop_table(src)
+
+    def test_iceberg_schema_evolution_adds_column(self):
+        """Write v1 schema then v2 (extra column) — verify new column lands correctly."""
+        src = "cloud_dedup_test.schema_evo"
+        self._drop_table(src)
+        try:
+            schema_v1 = [
+                ColumnSchema("id",   "bigint",  nullable=False, primary_key=True),
+                ColumnSchema("name", "varchar", nullable=True,  primary_key=False),
+            ]
+            schema_v2 = schema_v1 + [
+                ColumnSchema("email", "varchar", nullable=True, primary_key=False),
+            ]
+
+            ev1 = ChangeEvent(
+                op=Operation.INSERT, source_name="cloud_test", source_table=src,
+                before=None, after={"id": 1, "name": "Alice"},
+                schema=schema_v1,
+                timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+            )
+            self.sink.write_batch([ev1])
+
+            ev2 = ChangeEvent(
+                op=Operation.INSERT, source_name="cloud_test", source_table=src,
+                before=None, after={"id": 2, "name": "Bob", "email": "bob@example.com"},
+                schema=schema_v2,
+                timestamp=datetime.datetime.now(datetime.timezone.utc), offset=None,
+            )
+            self.sink.write_batch([ev2])
+
+            time.sleep(3)
+            ns, tbl = "cdc_e2e_test", "cloud_dedup_test_schema_evo"
+            rows = {r["id"]: r for r in self._cloud_rows(f'"{ns}"."{tbl}"')}
+            assert len(rows) == 2
+            assert "email" in rows[2], "New email column should exist after schema evolution"
+            assert rows[2]["email"] == "bob@example.com"
+        finally:
+            self._drop_table(src)
