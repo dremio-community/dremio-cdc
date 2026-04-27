@@ -227,8 +227,15 @@ def api_status():
     snap = _status_store.snapshot()
     snap["config_path"] = str(_config_path)
     cfg = _load_raw()
-    snap["target_namespace"] = cfg.get("dremio", {}).get("target_namespace", "")
-    snap["sink_mode"] = cfg.get("options", {}).get("sink_mode", "dremio")
+    global_ns  = cfg.get("dremio", {}).get("target_namespace", "")
+    sink_mode  = cfg.get("options", {}).get("sink_mode", "dremio")
+    snap["target_namespace"] = global_ns
+    snap["sink_mode"] = sink_mode
+    # Annotate each worker with its effective target namespace
+    source_ns_map = {s["name"]: s.get("target_namespace", "") for s in cfg.get("sources", [])}
+    for w in snap.get("workers", []):
+        src_ns = source_ns_map.get(w.get("source", ""), "")
+        w["target_namespace"] = src_ns or global_ns
     return jsonify(snap)
 
 

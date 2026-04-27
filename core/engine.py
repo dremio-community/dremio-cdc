@@ -393,14 +393,38 @@ class CDCEngine:
         )
         self._dlq_worker: Optional[DLQWorker] = None
 
+        # ── Sink pool: one sink per unique target namespace ───────────────────
+        # Each source can override target_namespace; sinks are shared when the
+        # namespace is the same so we don't open redundant REST sessions.
+        self._sinks: Dict[str, Any] = {}   # namespace -> sink instance
+
+        def _get_sink(namespace: str):
+            if namespace in self._sinks:
+                return self._sinks[namespace]
+            if sink_mode == "iceberg":
+                from core.iceberg_sink import IcebergSink
+                iceberg_cfg_copy = dict(cfg.get("iceberg", {}))
+                iceberg_cfg_copy["target_namespace"] = namespace
+                s = IcebergSink(iceberg_cfg=iceberg_cfg_copy, dremio_cfg=dremio_cfg)
+            else:
+                dremio_cfg_copy = dict(dremio_cfg)
+                dremio_cfg_copy["target_namespace"] = namespace
+                s = DremioSink(dremio_cfg_copy)
+            self._sinks[namespace] = s
+            return s
+
+        global_ns = dremio_cfg.get("target_namespace", "cdc")
         if sink_mode == "iceberg":
             from core.iceberg_sink import IcebergSink
             iceberg_cfg = cfg.get("iceberg", {})
-            self.sink = IcebergSink(iceberg_cfg=iceberg_cfg, dremio_cfg=dremio_cfg)
+            self._sinks[global_ns] = IcebergSink(iceberg_cfg=iceberg_cfg, dremio_cfg=dremio_cfg)
             logger.info("Sink mode: Iceberg direct (Mode B)")
         else:
-            self.sink = DremioSink(dremio_cfg)
+            self._sinks[global_ns] = DremioSink(dremio_cfg)
             logger.info("Sink mode: Dremio SQL (Mode A)")
+
+        # Expose primary sink for DLQ worker (uses global namespace)
+        self.sink = self._sinks[global_ns]
 
         self.workers: List[TableWorker] = []
 
@@ -424,9 +448,15 @@ class CDCEngine:
             masking_rules = sc.get("masking", {})
             masker = MaskingEngine(masking_rules) if masking_rules else None
 
+            # Use source-level namespace if set, else fall back to global
+            source_ns = sc.get("target_namespace") or global_ns
+            source_sink = _get_sink(source_ns)
+            if source_ns != global_ns:
+                logger.info("Source '%s' → namespace '%s'", sc["name"], source_ns)
+
             for table in source.tables:
                 worker = TableWorker(
-                    source, table, self.sink,
+                    source, table, source_sink,
                     self.offset_store, self.status_store, options,
                     schema_store=self.schema_store,
                     dlq=self.dlq,
@@ -436,7 +466,8 @@ class CDCEngine:
                 self.workers.append(worker)
 
     def start(self):
-        self.sink.connect()
+        for s in self._sinks.values():
+            s.connect()
         self.status_store.set_engine_state("running")
         for w in self.workers:
             logger.info("Starting worker %s", w.name)

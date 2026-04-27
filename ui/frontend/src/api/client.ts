@@ -158,6 +158,7 @@ export interface WorkerStatus {
   last_offset: string | null
   error: string | null
   started_at: number | null
+  target_namespace?: string
 }
 
 export interface EngineStatusSummary {

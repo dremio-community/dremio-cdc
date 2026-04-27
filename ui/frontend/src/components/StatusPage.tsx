@@ -118,7 +118,7 @@ export default function StatusPage() {
               w={w}
               onReset={handleReset}
               engineStopped={!isRunning}
-              targetNamespace={status.target_namespace}
+              targetNamespace={w.target_namespace || status.target_namespace}
               sinkMode={status.sink_mode}
             />
           ))}

@@ -176,6 +176,7 @@ function SourceModal({ initial, onClose, onSaved }: {
       ? { listen_port: String(initial?.listen_port ?? defaultDebeziumPort(initial?.type ?? 'debezium')) }
       : initConn(initial?.type ?? 'postgres', initial?.connection)
   )
+  const [targetNs, setTargetNs] = useState<string>(initial?.target_namespace ?? '')
   const [tables, setTables] = useState<string[]>(initial?.tables ?? [])
   const [columns, setColumns] = useState<Record<string, string[]>>(initial?.columns ?? {})
   const [masking, setMasking] = useState<Record<string, Record<string, string>>>(initial?.masking ?? {})
@@ -215,8 +216,8 @@ function SourceModal({ initial, onClose, onSaved }: {
     setSaving(true)
     try {
       const src: Source = isDebeziumLike(type)
-        ? { name, type: type as any, listen_port: parseInt(conn.listen_port ?? '8765', 10), tables, columns, masking }
-        : { name, type: type as any, connection: conn, tables, columns, masking }
+        ? { name, type: type as any, listen_port: parseInt(conn.listen_port ?? '8765', 10), tables, columns, masking, ...(targetNs ? { target_namespace: targetNs } : {}) }
+        : { name, type: type as any, connection: conn, tables, columns, masking, ...(targetNs ? { target_namespace: targetNs } : {}) }
       if (isEdit) await updateSource(initial!.name, src)
       else await addSource(src)
       onSaved()
@@ -372,6 +373,13 @@ function SourceModal({ initial, onClose, onSaved }: {
                 )}
               </div>
             ))}
+
+            <div style={S.field}>
+              <label style={S.label}>TARGET NAMESPACE <span style={{ color: '#64748b', fontWeight: 400, fontSize: 10 }}>(optional — overrides global target)</span></label>
+              <input style={S.input} type="text" value={targetNs}
+                onChange={e => setTargetNs(e.target.value)}
+                placeholder="e.g. hudi_finance (leave blank to use global target)" />
+            </div>
 
             {testResult && (
               <div style={{ ...S.testBanner, background: testResult.ok ? '#052e16' : '#2d0a0a', borderColor: testResult.ok ? '#166534' : '#7f1d1d' }}>
