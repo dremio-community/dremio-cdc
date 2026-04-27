@@ -1,0 +1,106 @@
+# Dremio CDC — Google Cloud Pub/Sub → Iceberg example config
+#
+# Each subscription maps to one Iceberg table in Dremio Open Catalog.
+# Messages must be JSON. Schema is inferred from the first message and
+# evolves automatically as new fields appear (with sink_mode: iceberg).
+#
+# Prerequisites:
+#   1. A GCP project with Pub/Sub API enabled
+#   2. A subscription (not just a topic) for each table entry
+#   3. A service account with roles/pubsub.subscriber
+#   4. pip install google-cloud-pubsub
+
+# ── Dremio connection ─────────────────────────────────────────────────────────
+dremio:
+  host:             localhost
+  port:             9047
+  ssl:              false
+  user:             admin
+  password:         ${DREMIO_PASSWORD}
+  # For Dremio Cloud use PAT instead:
+  # pat:            ${DREMIO_PAT}
+  target_namespace: cdc
+
+# ── Pub/Sub source ────────────────────────────────────────────────────────────
+sources:
+
+  - name: my_pubsub
+    type: pubsub
+
+    connection:
+      project_id:              my-gcp-project-id
+      # credentials_file:      /path/to/service-account.json  # omit to use ADC
+      ack_deadline_seconds:    120     # how long messages stay in-flight before Pub/Sub redelivers
+      max_messages_per_pull:   100     # messages per pull call (1–1000)
+      pull_timeout_seconds:    5       # seconds to wait before yielding a heartbeat
+
+    # Each entry is a Pub/Sub subscription name.
+    # The resulting Iceberg table will have the same name.
+    tables:
+      - orders-subscription
+      - user-events-subscription
+
+    # ── CDC operation detection (optional) ───────────────────────────────────
+    # If your messages carry an explicit operation field, set op_field.
+    # If omitted, all messages are treated as INSERT.
+    op_field: operation         # JSON field that holds the operation type
+    op_map:                     # map your field values → CDC ops (defaults shown)
+      insert: insert
+      create: insert
+      update: update
+      modify: update
+      delete: delete
+      remove: delete
+
+    # ── Primary key (optional but recommended for upserts) ───────────────────
+    # Comma-separated list of JSON fields that form the primary key.
+    # Required for write_mode: merge to do upserts instead of appends.
+    primary_key_field: id
+
+    # ── Column masking (optional) ────────────────────────────────────────────
+    # masking:
+    #   orders-subscription:
+    #     - column: credit_card
+    #       strategy: hash
+
+# ── Global options ────────────────────────────────────────────────────────────
+options:
+  sink_mode:              iceberg   # must be iceberg for schema evolution + upserts
+  batch_size:             500
+  batch_timeout_seconds:  10
+  snapshot_on_first_run:  false     # Pub/Sub has no historical store — always false
+  offset_db_path:         ./cdc_offsets.db
+  schema_db_path:         ./cdc_schemas.db
+  log_level:              INFO
+
+# ── Iceberg / Dremio Open Catalog ────────────────────────────────────────────
+# Dremio Cloud:
+iceberg:
+  type:               rest
+  uri:                https://catalog.dremio.cloud/api/iceberg
+  token:              ${DREMIO_PAT}
+  warehouse:          my-project-name
+  target_namespace:   cdc
+  write_mode:         merge     # merge = upsert by PK; append = insert-only
+
+  # sort_by: comma-separated column name(s) to use as Iceberg sort order.
+  # Dremio treats this as the clustering key — enables file-skipping without
+  # the overhead of partitioning. Use your main filter column (event timestamp,
+  # tenant ID, etc.). Applies when the table is first created; existing tables
+  # are not re-sorted.
+  sort_by: event_ts             # e.g. a timestamp field present in your messages
+
+  # Metadata columns written to every row automatically:
+  #   _cdc_op         — insert / update / delete / snapshot
+  #   _cdc_source     — connector name from config
+  #   _cdc_ts         — event timestamp (Pub/Sub publish time)
+  #   _cdc_ingest_ts  — wall-clock time the CDC engine processed this row
+
+# Dremio Enterprise (on-prem Open Catalog):
+# iceberg:
+#   type:             rest
+#   uri:              http://localhost:8181/api/catalog
+#   token:            ${DREMIO_PAT}
+#   warehouse:        my-catalog-name
+#   target_namespace: cdc
+#   write_mode:       merge

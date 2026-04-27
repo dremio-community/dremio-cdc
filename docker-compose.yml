@@ -226,6 +226,19 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # ── Google Cloud Pub/Sub Emulator ────────────────────────────────────────────
+  # Set PUBSUB_EMULATOR_HOST=localhost:8085 before running tests.
+  # The google-cloud-pubsub client honours this env var automatically.
+  pubsub-emulator:
+    image: messagebird/gcloud-pubsub-emulator:latest
+    ports:
+      - "8085:8681"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8681 || exit 1"]
+      interval: 3s
+      retries: 15
+      start_period: 10s
+
   # ── Google Cloud Spanner Emulator ────────────────────────────────────────────
   # Emulates Spanner gRPC (9010) and REST (9020) APIs locally.
   # The Python client connects via SPANNER_EMULATOR_HOST=localhost:9010.

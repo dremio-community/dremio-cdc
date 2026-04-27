@@ -81,6 +81,7 @@ def _load_sources():
     from sources.snowflake_src import SnowflakeSource
     from sources.cockroachdb import CockroachDBSource
     from sources.spanner     import SpannerSource
+    from sources.pubsub      import PubSubSource
 
     register_source("postgres",    PostgresSource)
     register_source("mysql",       MySQLSource)
@@ -94,6 +95,7 @@ def _load_sources():
     register_source("snowflake",   SnowflakeSource)
     register_source("cockroachdb", CockroachDBSource)
     register_source("spanner",     SpannerSource)
+    register_source("pubsub",      PubSubSource)
 
 
 class TableWorker(threading.Thread):
@@ -287,6 +289,7 @@ class TableWorker(threading.Thread):
             flush_duration_ms = flush_duration_s * 1000
             if offset is not None:
                 self.offset_store.set(self.source.name, self.table, offset)
+            self.source.on_batch_committed(self.table, offset)
             self.status.record_flush(
                 self.source.name, self.table, len(batch), offset,
                 source_ts=source_ts, flush_duration_ms=flush_duration_ms,

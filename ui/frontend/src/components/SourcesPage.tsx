@@ -23,7 +23,7 @@ const MASK_LABELS: Record<string, string> = {
   mask_name:   'Name   (J***)',
 }
 
-const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium', 'spanner'] as const
+const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium', 'spanner', 'pubsub'] as const
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([])
@@ -168,6 +168,8 @@ function SourceModal({ initial, onClose, onSaved }: {
   const initConn = (t: string, existing?: Record<string, unknown>) =>
     ({ ...defaultConn(t), ...Object.fromEntries(Object.entries(existing ?? {}).map(([k, v]) => [k, String(v)])) })
   const isDebeziumLike = (t: string) => t === 'debezium' || t === 'oracle' || t === 'db2'
+  const isPubSub = (t: string) => t === 'pubsub'
+  const isManualTables = (t: string) => isDebeziumLike(t) || isPubSub(t)
   const [conn, setConn] = useState<Record<string, string>>(() =>
     isDebeziumLike(initial?.type ?? '')
       ? { listen_port: String(initial?.listen_port ?? defaultDebeziumPort(initial?.type ?? 'debezium')) }
@@ -283,7 +285,7 @@ function SourceModal({ initial, onClose, onSaved }: {
                 {SOURCE_TYPES.map(t => (
                   <button key={t}
                     style={{ ...S.typeBtn, ...(type === t ? S.typeBtnActive : {}) }}
-                    onClick={() => { setType(t); setConn(isDebeziumLike(t) ? { listen_port: String(defaultDebeziumPort(t)) } : initConn(t)) }}
+                    onClick={() => { setType(t); setConn(isDebeziumLike(t) ? { listen_port: String(defaultDebeziumPort(t)) } : initConn(t)); setTestResult(null) }}
                   >{t}</button>
                 ))}
               </div>
@@ -306,6 +308,17 @@ function SourceModal({ initial, onClose, onSaved }: {
                   {type === 'oracle' && <>Start with: <code style={S.code}>cp debezium/oracle.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8765}:{conn.listen_port ?? 8765} debezium/server:2.7</code></>}
                   {type === 'db2'    && <>Start with: <code style={S.code}>cp debezium/db2.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8767}:{conn.listen_port ?? 8767} debezium/server:2.7</code></>}
                   {type === 'debezium' && <>Point <code style={S.code}>debezium.sink.http.url</code> at <code style={S.code}>http://&lt;host&gt;:{conn.listen_port ?? 8765}/events</code></>}
+                </div>
+              </div>
+            )}
+            {isPubSub(type) && (
+              <div style={S.setupHint}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                  ☁️ Google Cloud Pub/Sub — pull subscription
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  Each entry in the subscriptions list maps to one Iceberg table. Messages must be JSON.
+                  Leave service account path blank to use Application Default Credentials (ADC).
                 </div>
               </div>
             )}
@@ -337,6 +350,8 @@ function SourceModal({ initial, onClose, onSaved }: {
                 {testResult.ok
                   ? isDebeziumLike(type)
                     ? <><CheckCircle size={14} color="#4ade80" /> Listener ready on port {conn.listen_port ?? 8765} — Debezium Server will push events here</>
+                    : isPubSub(type)
+                    ? <><CheckCircle size={14} color="#4ade80" /> Connected to Pub/Sub project — enter subscription names below</>
                     : <><CheckCircle size={14} color="#4ade80" /> Connected — found {available.length} tables</>
                   : <><AlertCircle size={14} color="#f87171" /> {testResult.error}</>}
               </div>
@@ -349,9 +364,9 @@ function SourceModal({ initial, onClose, onSaved }: {
               <button style={S.btnSecondary} onClick={handleTest} disabled={testing}>
                 {testing ? <Loader size={13} /> : null} Test connection
               </button>
-              {(testResult?.ok || isDebeziumLike(type)) && (
+              {(testResult?.ok || isManualTables(type)) && (
                 <button style={S.btnPrimary} onClick={() => setStep('tables')}>
-                  {isDebeziumLike(type) ? 'Enter tables →' : 'Choose tables →'}
+                  {isDebeziumLike(type) ? 'Enter tables →' : isPubSub(type) ? 'Enter subscriptions →' : 'Choose tables →'}
                 </button>
               )}
             </div>
@@ -444,11 +459,13 @@ function SourceModal({ initial, onClose, onSaved }: {
 
               {available.length === 0 && (
                 <div style={{ color: '#64748b', padding: 16 }}>
-                  {isDebeziumLike(type)
+                  {isPubSub(type)
+                    ? <>Enter one Pub/Sub subscription name per line. Each subscription becomes an Iceberg table with the same name (hyphens converted to underscores):</>
+                    : isDebeziumLike(type)
                     ? <>Enter table names exactly as Debezium sends them ({debeziumTableHint(type)}):</>
                     : <>No tables found — type table names manually:</>}
                   <textarea style={{ ...S.input, marginTop: 8, height: 80, resize: 'vertical' }}
-                    placeholder={debeziumTablePlaceholder(type)}
+                    placeholder={isPubSub(type) ? 'orders-subscription\nuser-events-subscription' : debeziumTablePlaceholder(type)}
                     value={tables.join('\n')}
                     onChange={e => setTables(e.target.value.split('\n').filter(Boolean))}
                   />
@@ -661,6 +678,13 @@ function connFields(type: string): FieldDef[] {
       { key: 'change_stream', label: 'Change stream name (optional)', default: 'DremiocdcStream' },
       { key: 'credentials_file', label: 'Service account key path (optional)', placeholder: '/path/to/key.json' },
     ]
+    case 'pubsub': return [
+      { key: 'project_id',             label: 'GCP Project ID',                      placeholder: 'my-gcp-project' },
+      { key: 'credentials_file',       label: 'Service account key path (optional)', placeholder: '/path/to/key.json' },
+      { key: 'ack_deadline_seconds',   label: 'Ack deadline (seconds)',               default: '120' },
+      { key: 'max_messages_per_pull',  label: 'Max messages per pull',                default: '100' },
+      { key: 'pull_timeout_seconds',   label: 'Pull timeout (seconds)',               default: '5' },
+    ]
     default: return []
   }
 }
@@ -702,6 +726,7 @@ function typeColor(type: string): React.CSSProperties {
     db2:         { background: '#1a1a2e', color: '#c084fc' },
     debezium:    { background: '#2d1a0a', color: '#fdba74' },
     spanner:     { background: '#0a2a1f', color: '#34d399' },
+    pubsub:      { background: '#1a2637', color: '#38bdf8' },
   }
   return map[type] ?? {}
 }

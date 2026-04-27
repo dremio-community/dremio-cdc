@@ -43,3 +43,6 @@ hvac>=2.0
 
 # Google Cloud Spanner
 google-cloud-spanner>=3.40
+
+# Google Cloud Pub/Sub
+google-cloud-pubsub>=2.21

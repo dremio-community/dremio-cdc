@@ -627,6 +627,10 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
                 tables.extend(page["TableNames"])
             return tables
 
+        if src_type == "pubsub":
+            # No table introspection for Pub/Sub — subscriptions are entered manually
+            return []
+
     except Exception as exc:
         logger.warning("Table introspection failed: %s", exc)
     return []

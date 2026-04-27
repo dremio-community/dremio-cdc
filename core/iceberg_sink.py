@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -110,11 +111,16 @@ def _iceberg_type(col_type: str):
 
 
 # ── CDC metadata columns ───────────────────────────────────────────────────────
+# _cdc_op         — CDC operation: insert / update / delete / snapshot
+# _cdc_source     — connector instance name from config
+# _cdc_ts         — event timestamp (e.g. Pub/Sub publish time, DB commit time)
+# _cdc_ingest_ts  — wall-clock time the CDC engine processed this row
 
 _CDC_META = [
-    ColumnSchema("_cdc_op",     "varchar"),
-    ColumnSchema("_cdc_source", "varchar"),
-    ColumnSchema("_cdc_ts",     "timestamp"),
+    ColumnSchema("_cdc_op",         "varchar"),
+    ColumnSchema("_cdc_source",     "varchar"),
+    ColumnSchema("_cdc_ts",         "timestamp"),
+    ColumnSchema("_cdc_ingest_ts",  "timestamp"),
 ]
 
 
@@ -142,6 +148,9 @@ class IcebergSink:
         self._dremio_cfg   = dremio_cfg
         self._namespace    = iceberg_cfg.get("target_namespace", "cdc")
         self._write_mode   = iceberg_cfg.get("write_mode", "merge")   # "append" | "merge"
+        self._sort_by: List[str] = [
+            c.strip() for c in iceberg_cfg.get("sort_by", "").split(",") if c.strip()
+        ]
         self._catalog      = None
         self._dremio_token: Optional[str] = None
         self._dremio_bearer = False
@@ -162,6 +171,7 @@ class IcebergSink:
         catalog_type = cfg.pop("type", "rest")
         cfg.pop("target_namespace", None)
         cfg.pop("write_mode", None)
+        cfg.pop("sort_by", None)
 
         self._catalog = load_catalog(catalog_type, **cfg)
 
@@ -246,11 +256,11 @@ class IcebergSink:
     # ── Schema helpers ─────────────────────────────────────────────────────────
 
     def _table_identifier(self, source_table: str) -> str:
-        safe = source_table.replace(".", "_").lower()
+        safe = source_table.replace(".", "_").replace("-", "_").lower()
         return f"{self._namespace}.{safe}"
 
     def _dremio_table_path(self, source_table: str) -> str:
-        safe = source_table.replace(".", "_").lower()
+        safe = source_table.replace(".", "_").replace("-", "_").lower()
         return f'"{self._namespace}"."{safe}"'
 
     def _ensure_table(self, source_table: str, schema: List[ColumnSchema]):
@@ -275,12 +285,41 @@ class IcebergSink:
         iceberg_schema = Schema(*fields)
 
         try:
-            self._catalog.create_table(identifier=identifier, schema=iceberg_schema)
-            logger.info("Created Iceberg table %s", identifier)
+            sort_order = self._build_sort_order(iceberg_schema)
+            kwargs = {"identifier": identifier, "schema": iceberg_schema}
+            if sort_order is not None:
+                kwargs["sort_order"] = sort_order
+            self._catalog.create_table(**kwargs)
+            logger.info("Created Iceberg table %s%s", identifier,
+                        f" (sort_by={self._sort_by})" if sort_order else "")
         except Exception:
             pass   # table already exists
 
         self._known_tables.add(source_table)
+
+    def _build_sort_order(self, iceberg_schema):
+        """Build a PyIceberg SortOrder from self._sort_by column names, or None."""
+        if not self._sort_by:
+            return None
+        try:
+            from pyiceberg.table.sorting import SortOrder, SortField, SortDirection, NullOrder
+            from pyiceberg.transforms import IdentityTransform
+            fields = []
+            for col_name in self._sort_by:
+                try:
+                    f = iceberg_schema.find_field(col_name)
+                    fields.append(SortField(
+                        source_id=f.field_id,
+                        transform=IdentityTransform(),
+                        direction=SortDirection.ASC,
+                        null_order=NullOrder.NULLS_LAST,
+                    ))
+                except Exception:
+                    logger.warning("sort_by column '%s' not found in schema — skipping", col_name)
+            return SortOrder(*fields) if fields else None
+        except ImportError:
+            logger.warning("PyIceberg sort order not available — sort_by ignored")
+            return None
 
     def _evolve_schema(self, source_table: str, schema: List[ColumnSchema]):
         """Add any new columns to an existing Iceberg table's schema."""
@@ -349,9 +388,10 @@ class IcebergSink:
     def _enrich(self, ev: ChangeEvent) -> Dict:
         """Add _cdc_* metadata to a row dict."""
         row = dict(ev.row or {})
-        row["_cdc_op"]     = ev.op.value
-        row["_cdc_source"] = ev.source_name
-        row["_cdc_ts"]     = ev.timestamp
+        row["_cdc_op"]        = ev.op.value
+        row["_cdc_source"]    = ev.source_name
+        row["_cdc_ts"]        = ev.timestamp
+        row["_cdc_ingest_ts"] = datetime.now(timezone.utc)
         return row
 
     def _write_append(self, table, events: List[ChangeEvent], schema: List[ColumnSchema]):

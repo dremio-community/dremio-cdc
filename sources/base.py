@@ -57,6 +57,13 @@ class CDCSource(ABC):
         """
         raise NotImplementedError
 
+    def on_batch_committed(self, table: str, offset: Any) -> None:
+        """
+        Called by the engine after a batch has been successfully written to the sink
+        and the offset committed. Override in sources that need post-flush acking
+        (e.g. Pub/Sub, Kinesis). Default is a no-op.
+        """
+
     def get_pk_column(self, table: str) -> Optional[str]:
         """Return the best cursor column for incremental snapshot (first PK column)."""
         try:
