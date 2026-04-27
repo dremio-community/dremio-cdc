@@ -113,7 +113,14 @@ export default function StatusPage() {
       ) : (
         <div style={S.grid}>
           {status.workers.map(w => (
-            <WorkerCard key={`${w.source}/${w.table}`} w={w} onReset={handleReset} />
+            <WorkerCard
+              key={`${w.source}/${w.table}`}
+              w={w}
+              onReset={handleReset}
+              engineStopped={!isRunning}
+              targetNamespace={status.target_namespace}
+              sinkMode={status.sink_mode}
+            />
           ))}
         </div>
       )}
@@ -130,15 +137,28 @@ function SummaryTile({ label, value, color }: { label: string; value: string; co
   )
 }
 
-function WorkerCard({ w, onReset }: { w: WorkerStatus; onReset: (s: string, t: string) => void }) {
+function WorkerCard({ w, onReset, engineStopped, targetNamespace, sinkMode }: {
+  w: WorkerStatus
+  onReset: (s: string, t: string) => void
+  engineStopped?: boolean
+  targetNamespace?: string
+  sinkMode?: string
+}) {
+  const displayState = engineStopped && w.state !== 'error' ? 'idle' : w.state
+  const dimmed = engineStopped && w.state !== 'error'
+  const sinkLabel = targetNamespace
+    ? (sinkMode === 'iceberg' ? `→ iceberg:${targetNamespace}` : `→ ${targetNamespace}`)
+    : null
+
   return (
-    <div style={{ ...S.card, ...(w.state === 'error' ? S.cardError : {}) }}>
+    <div style={{ ...S.card, ...(displayState === 'error' ? S.cardError : {}), ...(dimmed ? { opacity: 0.5 } : {}) }}>
       <div style={S.cardHeader}>
         <div>
           <div style={S.cardSource}>{w.source}</div>
           <div style={S.cardTable}>{w.table}</div>
+          {sinkLabel && <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 2, fontFamily: 'monospace' }}>{sinkLabel}</div>}
         </div>
-        <StateBadge state={w.state} />
+        <StateBadge state={displayState} />
       </div>
 
       <div style={S.metrics}>

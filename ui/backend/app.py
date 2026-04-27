@@ -226,6 +226,9 @@ def api_engine_restart():
 def api_status():
     snap = _status_store.snapshot()
     snap["config_path"] = str(_config_path)
+    cfg = _load_raw()
+    snap["target_namespace"] = cfg.get("dremio", {}).get("target_namespace", "")
+    snap["sink_mode"] = cfg.get("options", {}).get("sink_mode", "dremio")
     return jsonify(snap)
 
 
@@ -739,6 +742,72 @@ def api_target_namespaces():
         return jsonify({"ok": True, "namespaces": namespaces})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
+
+
+# ── API: saved target presets ─────────────────────────────────────────────────
+
+def _targets_path() -> Path:
+    return _config_path.parent / "targets.json"
+
+def _load_targets() -> list:
+    p = _targets_path()
+    if p.exists():
+        import json
+        with open(p) as f:
+            return json.load(f).get("targets", [])
+    return []
+
+def _save_targets(targets: list):
+    import json
+    with open(_targets_path(), "w") as f:
+        json.dump({"targets": targets}, f, indent=2)
+
+
+@app.get("/api/targets")
+def api_targets_list():
+    return jsonify({"targets": _load_targets()})
+
+
+@app.post("/api/targets")
+def api_targets_save():
+    body = request.json or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    targets = _load_targets()
+    targets = [t for t in targets if t.get("name") != name]  # replace if exists
+    targets.append({
+        "name": name,
+        "dremio": body.get("dremio", {}),
+        "iceberg": body.get("iceberg", {}),
+        "sink_mode": body.get("sink_mode", "dremio"),
+    })
+    _save_targets(targets)
+    return jsonify({"saved": True})
+
+
+@app.delete("/api/targets/<name>")
+def api_targets_delete(name: str):
+    targets = [t for t in _load_targets() if t.get("name") != name]
+    _save_targets(targets)
+    return jsonify({"deleted": True})
+
+
+@app.post("/api/targets/<name>/load")
+def api_targets_load(name: str):
+    """Copy a saved preset into the active config and return it."""
+    targets = _load_targets()
+    preset = next((t for t in targets if t.get("name") == name), None)
+    if not preset:
+        return jsonify({"error": f"Preset '{name}' not found"}), 404
+    cfg = _load_raw()
+    if "dremio" in preset:
+        cfg["dremio"] = preset["dremio"]
+    if "iceberg" in preset:
+        cfg["iceberg"] = preset["iceberg"]
+    cfg.setdefault("options", {})["sink_mode"] = preset.get("sink_mode", "dremio")
+    _save_raw(cfg)
+    return jsonify({"loaded": True, "target": preset})
 
 
 @app.get("/api/mappings")

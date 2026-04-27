@@ -46,6 +46,12 @@ export const createSourceTables = (name: string, opts: { tables?: string[]; dry_
 // Namespace browser
 export const getNamespaces = () => req<{ ok: boolean; namespaces?: NamespaceItem[]; error?: string }>('GET', '/target/namespaces')
 
+// Saved target presets
+export const listTargetPresets  = () => req<{ targets: TargetPreset[] }>('GET', '/targets')
+export const saveTargetPreset   = (p: TargetPreset) => req('POST', '/targets', p)
+export const deleteTargetPreset = (name: string) => req('DELETE', `/targets/${encodeURIComponent(name)}`)
+export const loadTargetPreset   = (name: string) => req<{ loaded: boolean; target: TargetPreset }>('POST', `/targets/${encodeURIComponent(name)}/load`)
+
 // Mappings
 export const getMappings = () => req<MappingsResult>('GET', '/mappings')
 
@@ -112,6 +118,13 @@ export interface TargetConfig {
   transform_studio?: TransformStudioConfig
 }
 
+export interface TargetPreset {
+  name: string
+  sink_mode: 'dremio' | 'iceberg'
+  dremio: DremioConfig
+  iceberg: IcebergConfig
+}
+
 export interface Settings {
   batch_size?: number
   batch_timeout_seconds?: number
@@ -159,6 +172,8 @@ export interface EngineStatus {
   engine_started_at: number | null
   workers: WorkerStatus[]
   config_path: string
+  target_namespace?: string
+  sink_mode?: string
   summary?: EngineStatusSummary
 }
 

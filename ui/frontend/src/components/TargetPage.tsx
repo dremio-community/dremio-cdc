@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ChevronDown, ChevronRight, CheckCircle, Cloud, Database, Loader, Save, Zap } from 'lucide-react'
-import { getTarget, saveTarget, testTarget, getNamespaces, getSources, TargetConfig, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig, Source } from '../api/client'
+import { AlertCircle, BookMarked, ChevronDown, ChevronRight, CheckCircle, Cloud, Database, Loader, Save, Trash2, Zap } from 'lucide-react'
+import { getTarget, saveTarget, testTarget, getNamespaces, getSources, listTargetPresets, saveTargetPreset, deleteTargetPreset, loadTargetPreset, TargetConfig, TargetPreset, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig, Source } from '../api/client'
 import SecretFieldInput from './SecretFieldInput'
 
 export default function TargetPage() {
@@ -23,6 +23,14 @@ export default function TargetPage() {
   const [nsLoading, setNsLoading] = useState(false)
   const nsRef = useRef<HTMLDivElement>(null)
 
+  // Saved presets
+  const [presets, setPresets] = useState<TargetPreset[]>([])
+  const [presetName, setPresetName] = useState('')
+  const [savingPreset, setSavingPreset] = useState(false)
+  const [presetsOpen, setPresetsOpen] = useState(false)
+
+  const refreshPresets = () => listTargetPresets().then(r => setPresets(r.targets)).catch(() => {})
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (nsRef.current && !nsRef.current.contains(e.target as Node)) setNsOpen(false)
@@ -34,7 +42,32 @@ export default function TargetPage() {
   useEffect(() => {
     getTarget().then(setCfg).catch(() => {})
     getSources().then(setSources).catch(() => {})
+    refreshPresets()
   }, [])
+
+  const handleSavePreset = async () => {
+    const name = presetName.trim()
+    if (!name) return
+    setSavingPreset(true)
+    await saveTargetPreset({ name, sink_mode: cfg.sink_mode, dremio: cfg.dremio, iceberg: cfg.iceberg })
+    await refreshPresets()
+    setPresetName('')
+    setSavingPreset(false)
+  }
+
+  const handleLoadPreset = async (name: string) => {
+    const r = await loadTargetPreset(name)
+    if (r.loaded) {
+      const t = r.target
+      setCfg(c => ({ ...c, sink_mode: t.sink_mode, dremio: t.dremio, iceberg: t.iceberg }))
+      setSaved(true); setSavedAt(new Date()); setTimeout(() => setSaved(false), 4000)
+    }
+  }
+
+  const handleDeletePreset = async (name: string) => {
+    await deleteTargetPreset(name)
+    refreshPresets()
+  }
 
   const updateDremio = (k: keyof DremioConfig, v: unknown) =>
     setCfg(c => ({ ...c, dremio: { ...c.dremio, [k]: v } }))
@@ -115,6 +148,63 @@ export default function TargetPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Saved presets panel */}
+      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
+        <button
+          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#cbd5e1', fontSize: 15, padding: 0, width: '100%' }}
+          onClick={() => setPresetsOpen(o => !o)}
+        >
+          {presetsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <BookMarked size={16} />
+          <span style={{ fontWeight: 600 }}>Saved targets</span>
+          {presets.length > 0 && (
+            <span style={{ background: '#1e293b', color: '#94a3b8', fontSize: 12, borderRadius: 10, padding: '1px 8px', marginLeft: 2 }}>{presets.length}</span>
+          )}
+        </button>
+
+        {presetsOpen && (
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {presets.length === 0 && (
+              <div style={{ fontSize: 13, color: '#64748b' }}>No saved targets yet. Fill in your connection below and save a preset.</div>
+            )}
+            {presets.map(p => (
+              <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1e293b', borderRadius: 8, padding: '10px 14px' }}>
+                <span style={{ flex: 1, fontSize: 15, fontFamily: 'monospace', color: '#e2e8f0' }}>{p.name}</span>
+                <span style={{ fontSize: 12, color: p.sink_mode === 'iceberg' ? '#a78bfa' : '#60a5fa', background: '#0f172a', borderRadius: 4, padding: '2px 8px' }}>
+                  {p.sink_mode === 'iceberg' ? 'Mode B' : 'Mode A'}
+                </span>
+                <span style={{ fontSize: 13, color: '#64748b', fontFamily: 'monospace' }}>
+                  {p.sink_mode === 'iceberg' ? (p.iceberg?.target_namespace ?? '') : (p.dremio?.target_namespace ?? '')}
+                </span>
+                <button
+                  style={{ fontSize: 13, background: '#0f172a', border: '1px solid #334155', borderRadius: 5, color: '#cbd5e1', padding: '4px 12px', cursor: 'pointer' }}
+                  onClick={() => handleLoadPreset(p.name)}
+                >Load</button>
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', padding: 2, display: 'flex' }}
+                  onClick={() => handleDeletePreset(p.name)}
+                  title="Delete preset"
+                ><Trash2 size={15} /></button>
+              </div>
+            ))}
+
+            {/* Save current as preset */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <input
+                style={{ ...S.input, flex: 1, fontSize: 14 }}
+                placeholder="Preset name (e.g. hudi-dev, prod-arctic)"
+                value={presetName}
+                onChange={e => setPresetName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSavePreset()}
+              />
+              <button style={S.btnSecondary} onClick={handleSavePreset} disabled={savingPreset || !presetName.trim()}>
+                {savingPreset ? <Loader size={13} /> : <Save size={13} />} Save preset
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mode selector */}
