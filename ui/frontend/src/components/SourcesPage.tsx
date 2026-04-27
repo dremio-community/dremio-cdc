@@ -23,7 +23,7 @@ const MASK_LABELS: Record<string, string> = {
   mask_name:   'Name   (J***)',
 }
 
-const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium'] as const
+const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium', 'spanner'] as const
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([])
@@ -654,6 +654,13 @@ function connFields(type: string): FieldDef[] {
     case 'debezium': return [
       { key: 'listen_port', label: 'Listen port', default: '8765' },
     ]
+    case 'spanner': return [
+      { key: 'project',       label: 'GCP Project ID',   placeholder: 'my-gcp-project' },
+      { key: 'instance',      label: 'Instance ID',       placeholder: 'my-instance' },
+      { key: 'database',      label: 'Database',          placeholder: 'my-database' },
+      { key: 'change_stream', label: 'Change stream name (optional)', default: 'DremiocdcStream' },
+      { key: 'credentials_file', label: 'Service account key path (optional)', placeholder: '/path/to/key.json' },
+    ]
     default: return []
   }
 }
@@ -694,6 +701,7 @@ function typeColor(type: string): React.CSSProperties {
     oracle:      { background: '#2d1a0a', color: '#fb923c' },
     db2:         { background: '#1a1a2e', color: '#c084fc' },
     debezium:    { background: '#2d1a0a', color: '#fdba74' },
+    spanner:     { background: '#0a2a1f', color: '#34d399' },
   }
   return map[type] ?? {}
 }
