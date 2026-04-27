@@ -41,6 +41,24 @@ services:
       - mysql_data:/var/lib/mysql
       - ./tests/fixtures/mysql_seed.sql:/docker-entrypoint-initdb.d/seed.sql
 
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_USER:          cdc_user
+      MARIADB_PASSWORD:      cdc_pass
+      MARIADB_DATABASE:      testdb
+    command: >
+      --binlog-format=ROW
+      --binlog-row-image=FULL
+      --server-id=2
+      --log-bin=mariadb-bin
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./tests/fixtures/mysql_seed.sql:/docker-entrypoint-initdb.d/seed.sql
+
   mongo:
     image: mongo:7
     command: mongod --replSet rs0 --bind_ip_all
@@ -204,6 +222,7 @@ services:
 volumes:
   pg_data:
   mysql_data:
+  mariadb_data:
   mongo_data:
   sqlserver_data:
   localstack_data:

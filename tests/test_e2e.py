@@ -2381,3 +2381,491 @@ class TestOracleDebeziumCloud:
             s2._catalog.drop_namespace(s2._namespace)
         except Exception:
             pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MariaDB CDC source — snapshot + streaming (mirrors MySQL tests)
+# ══════════════════════════════════════════════════════════════════════════════
+
+MARIADB_CFG = {
+    "connection": {
+        "host":     "localhost",
+        "port":     3307,          # mariadb service mapped to 3307
+        "user":     "cdc_user",
+        "password": "cdc_pass",
+        "database": "testdb",
+        "server_id": 1001,
+    }
+}
+
+
+@pytest.mark.mariadb
+class TestMariaDBSource:
+
+    def setup_method(self):
+        from sources.mariadb import MariaDBSource
+        self.src = MariaDBSource("mariadb_test", MARIADB_CFG)
+        self.src.connect()
+
+    def teardown_method(self):
+        self.src.close()
+
+    def test_get_schema_customers(self):
+        schema = self.src.get_schema("customers")
+        names = [c.name for c in schema]
+        assert "id" in names
+        assert "name" in names
+        assert "email" in names
+        pk_cols = [c.name for c in schema if c.primary_key]
+        assert "id" in pk_cols
+
+    def test_snapshot_customers(self):
+        events = list(self.src.snapshot("customers"))
+        assert len(events) >= 3
+        assert all("id" in e.after and "name" in e.after for e in events)
+
+    def test_snapshot_orders(self):
+        events = list(self.src.snapshot("orders"))
+        assert len(events) >= 3
+
+    def test_incremental_snapshot_chunk(self):
+        events = list(self.src.incremental_snapshot("customers", "id", None, 2))
+        assert len(events) == 2
+        assert events[0].after["id"] < events[1].after["id"]
+
+    def test_incremental_snapshot_after_cursor(self):
+        events = list(self.src.incremental_snapshot("customers", "id", 1, 10))
+        ids = [e.after["id"] for e in events]
+        assert all(i > 1 for i in ids)
+
+    def test_streaming_captures_insert(self):
+        import threading
+        from core.event import Operation
+
+        captured = []
+
+        def _stream():
+            for ev in self.src.stream("customers", None):
+                captured.append(ev)
+                if len(captured) >= 1:
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(1)
+
+        import pymysql
+        conn = pymysql.connect(
+            host="localhost", port=3307, user="cdc_user",
+            password="cdc_pass", database="testdb",
+            autocommit=True,
+        )
+        cur = conn.cursor()
+        uid = uuid.uuid4().hex[:8]
+        cur.execute(f"INSERT INTO customers (name, email) VALUES ('MDB_{uid}', 'mdb_{uid}@example.com')")
+        cur.close()
+        conn.close()
+
+        t.join(timeout=15)
+        assert any(e.op == Operation.INSERT for e in captured), "Expected INSERT event from MariaDB stream"
+
+    def test_streaming_captures_update(self):
+        import threading
+        from core.event import Operation
+
+        uid = uuid.uuid4().hex[:8]
+        import pymysql
+        conn = pymysql.connect(host="localhost", port=3307, user="cdc_user",
+                               password="cdc_pass", database="testdb", autocommit=True)
+        cur = conn.cursor()
+        cur.execute(f"INSERT INTO customers (name, email) VALUES ('MUpd_{uid}', 'mupd_{uid}@example.com')")
+        conn.close()
+
+        captured = []
+
+        def _stream():
+            for ev in self.src.stream("customers", None):
+                captured.append(ev)
+                if len(captured) >= 1:
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(1)
+
+        conn2 = pymysql.connect(host="localhost", port=3307, user="cdc_user",
+                                password="cdc_pass", database="testdb", autocommit=True)
+        cur2 = conn2.cursor()
+        cur2.execute(f"UPDATE customers SET name='MUpd_{uid}_done' WHERE name='MUpd_{uid}'")
+        conn2.close()
+
+        t.join(timeout=15)
+        assert any(e.op in (Operation.UPDATE, Operation.INSERT) for e in captured)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Dead Letter Queue — unit tests (no external deps)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDeadLetterQueue:
+    """Tests for DeadLetterQueue persistence and status transitions."""
+
+    def setup_method(self):
+        from core.dlq import DeadLetterQueue
+        self.dlq = DeadLetterQueue(db_path=":memory:", max_retries=3)
+        self._make_event = _make_dlq_event
+
+    def test_push_returns_id(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "boom")
+        assert isinstance(eid, int) and eid > 0
+
+    def test_push_appears_in_pending(self):
+        self.dlq.push("src", "tbl", [self._make_event()], "err")
+        pending = self.dlq.get_pending()
+        assert len(pending) == 1
+        assert pending[0]["status"] == "pending"
+        assert pending[0]["event_count"] == 1
+
+    def test_get_events_roundtrip(self):
+        from core.event import Operation
+        ev = self._make_event()
+        eid = self.dlq.push("src", "tbl", [ev], "err")
+        events = self.dlq.get_events(eid)
+        assert len(events) == 1
+        assert events[0].op == Operation.INSERT
+        assert events[0].after["id"] == 1
+
+    def test_mark_replayed(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "err")
+        self.dlq.mark_replayed(eid)
+        all_entries = self.dlq.get_all()
+        assert all_entries[0]["status"] == "replayed"
+        assert self.dlq.get_pending() == []
+
+    def test_mark_failed_increments_retry(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "err1")
+        self.dlq.mark_failed(eid, "err2")
+        entries = self.dlq.get_all()
+        assert entries[0]["retry_count"] == 1
+        assert entries[0]["status"] == "pending"  # still pending (1 < 3)
+
+    def test_exhausted_after_max_retries(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "err")
+        for i in range(3):
+            self.dlq.mark_failed(eid, f"err{i}")
+        entries = self.dlq.get_all()
+        assert entries[0]["status"] == "exhausted"
+        assert self.dlq.get_pending() == []
+
+    def test_reset_to_pending(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "err")
+        for i in range(3):
+            self.dlq.mark_failed(eid, f"err{i}")
+        self.dlq.reset_to_pending(eid)
+        pending = self.dlq.get_pending()
+        assert len(pending) == 1
+        assert pending[0]["retry_count"] == 0
+
+    def test_discard(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event()], "err")
+        self.dlq.discard(eid)
+        assert self.dlq.get_pending() == []
+        assert self.dlq.get_all()[0]["status"] == "discarded"
+
+    def test_discard_all(self):
+        self.dlq.push("src", "t1", [self._make_event()], "e1")
+        self.dlq.push("src", "t2", [self._make_event()], "e2")
+        self.dlq.discard_all()
+        assert self.dlq.pending_count() == 0
+        assert all(e["status"] == "discarded" for e in self.dlq.get_all())
+
+    def test_stats(self):
+        eid = self.dlq.push("src", "tbl", [self._make_event(), self._make_event()], "err")
+        self.dlq.mark_replayed(eid)
+        self.dlq.push("src", "tbl", [self._make_event()], "err2")
+        stats = self.dlq.stats()
+        assert stats["replayed"]["entries"] == 1
+        assert stats["replayed"]["events"] == 2
+        assert stats["pending"]["entries"] == 1
+
+    def test_pending_count(self):
+        self.dlq.push("src", "t1", [self._make_event()], "e1")
+        self.dlq.push("src", "t2", [self._make_event()], "e2")
+        assert self.dlq.pending_count() == 2
+
+
+class TestDLQWorker:
+    """Tests for DLQWorker retry/replay logic using a mock sink."""
+
+    def setup_method(self):
+        from core.dlq import DeadLetterQueue
+        self.dlq = DeadLetterQueue(db_path=":memory:", max_retries=3)
+
+    def test_worker_replays_on_success(self):
+        from core.dlq import DLQWorker
+
+        class OKSink:
+            def write_batch(self, events): pass
+
+        eid = self.dlq.push("src", "tbl", [_make_dlq_event()], "initial error")
+        worker = DLQWorker(self.dlq, OKSink(), interval_s=999)
+        worker._retry_pending()  # call directly — no threading needed
+
+        assert self.dlq.get_all()[0]["status"] == "replayed"
+
+    def test_worker_marks_failed_on_sink_error(self):
+        from core.dlq import DLQWorker
+
+        class BrokenSink:
+            def write_batch(self, events): raise RuntimeError("sink down")
+
+        eid = self.dlq.push("src", "tbl", [_make_dlq_event()], "initial error")
+        worker = DLQWorker(self.dlq, BrokenSink(), interval_s=999)
+        worker._retry_pending()
+
+        entry = self.dlq.get_all()[0]
+        assert entry["retry_count"] == 1
+        assert entry["status"] == "pending"
+
+    def test_worker_exhausts_after_max_retries(self):
+        from core.dlq import DLQWorker
+
+        class BrokenSink:
+            def write_batch(self, events): raise RuntimeError("sink down")
+
+        self.dlq.push("src", "tbl", [_make_dlq_event()], "initial error")
+        worker = DLQWorker(self.dlq, BrokenSink(), interval_s=999)
+        for _ in range(3):
+            worker._retry_pending()
+
+        assert self.dlq.get_all()[0]["status"] == "exhausted"
+        assert self.dlq.pending_count() == 0
+
+    def test_worker_skips_empty_events(self):
+        """Entry with no events should be auto-discarded, not crash."""
+        from core.dlq import DLQWorker
+
+        class OKSink:
+            def write_batch(self, events): pass
+
+        eid = self.dlq.push("src", "tbl", [], "no events")
+        worker = DLQWorker(self.dlq, OKSink(), interval_s=999)
+        worker._retry_pending()
+
+        assert self.dlq.get_all()[0]["status"] == "discarded"
+
+
+def _make_dlq_event():
+    from core.event import ChangeEvent, ColumnSchema, Operation
+    import datetime
+    return ChangeEvent(
+        op=Operation.INSERT,
+        source_name="test_src",
+        source_table="test.tbl",
+        before=None,
+        after={"id": 1, "name": "Alice"},
+        schema=[
+            ColumnSchema("id", "integer", primary_key=True),
+            ColumnSchema("name", "varchar"),
+        ],
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        offset=None,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AlertManager — unit tests (no external deps)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAlertManager:
+    """Tests for AlertManager threshold checking and channel dispatch."""
+
+    def _make_status(self, workers):
+        """Return a minimal StatusStore-like mock."""
+        class FakeStatus:
+            def snapshot(self_):
+                return {"workers": workers}
+        return FakeStatus()
+
+    def _make_mgr(self, cfg, workers):
+        from core.alert_manager import AlertManager
+        return AlertManager(cfg, self._make_status(workers))
+
+    # ── Threshold detection ───────────────────────────────────────────────────
+
+    def test_no_alert_below_lag_threshold(self):
+        fired = []
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5, "cooldown_seconds": 0, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 30, "error_count": 0, "state": "running"}],
+        )
+        mgr._maybe_fire = lambda **kw: fired.append(kw)
+        mgr._check()
+        assert fired == []
+
+    def test_alert_fires_above_lag_threshold(self):
+        fired = []
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5, "cooldown_seconds": 0, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 120, "error_count": 0, "state": "running"}],
+        )
+        original = mgr._maybe_fire
+        def capture(**kw): fired.append(kw); original(**kw)
+        mgr._maybe_fire = capture
+        mgr._check()
+        assert any(k["alert_type"] == "lag" for k in fired)
+
+    def test_alert_fires_on_error_threshold(self):
+        fired = []
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5, "cooldown_seconds": 0, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 0, "error_count": 5, "state": "running"}],
+        )
+        original = mgr._maybe_fire
+        def capture(**kw): fired.append(kw); original(**kw)
+        mgr._maybe_fire = capture
+        mgr._check()
+        assert any(k["alert_type"] == "errors" for k in fired)
+
+    def test_alert_fires_on_worker_error_state(self):
+        fired = []
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5, "cooldown_seconds": 0, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 0, "error_count": 0, "state": "error", "error": "conn lost"}],
+        )
+        original = mgr._maybe_fire
+        def capture(**kw): fired.append(kw); original(**kw)
+        mgr._maybe_fire = capture
+        mgr._check()
+        assert any(k["alert_type"] == "worker_error" for k in fired)
+
+    # ── Cooldown ──────────────────────────────────────────────────────────────
+
+    def test_cooldown_suppresses_second_alert(self):
+        from core.alert_manager import AlertManager
+        fired_count = [0]
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5,
+             "cooldown_seconds": 9999, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 120, "error_count": 0, "state": "running"}],
+        )
+        original_send = mgr._send
+        mgr._send = lambda ch, rec: fired_count.__setitem__(0, fired_count[0] + 1)
+        mgr._check()
+        mgr._check()  # second check should be suppressed by cooldown
+        assert fired_count[0] <= 1
+
+    def test_cooldown_zero_allows_repeated_alerts(self):
+        from core.alert_manager import AlertManager
+        fired_count = [0]
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5,
+             "cooldown_seconds": 0, "channels": [{"type": "webhook", "url": "http://x"}]},
+            [{"source": "s", "table": "t", "lag_seconds": 120, "error_count": 0, "state": "running"}],
+        )
+        mgr._send = lambda ch, rec: fired_count.__setitem__(0, fired_count[0] + 1)
+        mgr._check()
+        mgr._check()
+        assert fired_count[0] == 2
+
+    # ── Channel dispatch ──────────────────────────────────────────────────────
+
+    def test_slack_channel_posts_correct_payload(self):
+        from unittest.mock import patch, MagicMock
+        from core.alert_manager import AlertManager
+
+        mgr = self._make_mgr({"cooldown_seconds": 0, "channels": []}, [])
+        record = {"type": "lag", "source": "s", "table": "t",
+                  "message": "Lag 90s exceeds threshold 60s", "time": 0}
+
+        with patch("requests.post") as mock_post:
+            mock_post.return_value = MagicMock(raise_for_status=lambda: None)
+            mgr._send({"type": "slack", "webhook_url": "http://slack.test"}, record)
+            mock_post.assert_called_once()
+            payload = mock_post.call_args[1]["json"]
+            assert "text" in payload
+            assert "LAG" in payload["text"]
+
+    def test_webhook_channel_posts_correct_payload(self):
+        from unittest.mock import patch, MagicMock
+        from core.alert_manager import AlertManager
+
+        mgr = self._make_mgr({"cooldown_seconds": 0, "channels": []}, [])
+        record = {"type": "errors", "source": "s", "table": "t",
+                  "message": "Error count 5 reached threshold 5", "time": 0}
+
+        with patch("requests.post") as mock_post:
+            mock_post.return_value = MagicMock(raise_for_status=lambda: None)
+            mgr._send({"type": "webhook", "url": "http://hook.test", "method": "post"}, record)
+            mock_post.assert_called_once()
+            payload = mock_post.call_args[1]["json"]
+            assert payload["type"] == "errors"
+
+    def test_failed_channel_does_not_crash_other_channels(self):
+        """A broken channel should not prevent other channels from firing."""
+        from unittest.mock import patch, MagicMock
+        from core.alert_manager import AlertManager
+
+        delivered = []
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 10, "error_count_threshold": 99,
+             "cooldown_seconds": 0,
+             "channels": [
+                 {"type": "slack",   "webhook_url": "http://broken"},
+                 {"type": "webhook", "url": "http://ok"},
+             ]},
+            [{"source": "s", "table": "t", "lag_seconds": 120, "error_count": 0, "state": "running"}],
+        )
+
+        import requests as req_mod
+        def fake_post(url, **kw):
+            if "broken" in url:
+                raise ConnectionError("network down")
+            delivered.append(url)
+            return MagicMock(raise_for_status=lambda: None)
+
+        with patch("requests.post", side_effect=fake_post):
+            mgr._check()
+
+        assert any("ok" in u for u in delivered)
+
+    def test_get_recent_records_fired_alerts(self):
+        from unittest.mock import patch, MagicMock
+
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5,
+             "cooldown_seconds": 0, "channels": [{"type": "webhook", "url": "http://x"}]},
+            [{"source": "s", "table": "t", "lag_seconds": 120, "error_count": 0, "state": "running"}],
+        )
+        with patch("requests.post", return_value=MagicMock(raise_for_status=lambda: None)):
+            mgr._check()
+
+        recent = mgr.get_recent()
+        assert len(recent) >= 1
+        assert recent[0]["type"] == "lag"
+
+    def test_disabled_alert_manager_does_not_fire(self):
+        fired = []
+        mgr = self._make_mgr(
+            {"enabled": False, "lag_threshold_seconds": 0,
+             "error_count_threshold": 0, "cooldown_seconds": 0, "channels": []},
+            [{"source": "s", "table": "t", "lag_seconds": 999, "error_count": 999, "state": "error"}],
+        )
+        mgr._send = lambda ch, rec: fired.append(rec)
+        # _loop checks self._enabled before calling _check; simulate that here
+        if mgr._enabled:
+            mgr._check()
+        assert fired == []
+
+    def test_reconfigure_updates_thresholds(self):
+        from core.alert_manager import AlertManager
+
+        mgr = self._make_mgr(
+            {"lag_threshold_seconds": 60, "error_count_threshold": 5, "cooldown_seconds": 0, "channels": []},
+            [],
+        )
+        mgr.reconfigure({"lag_threshold_seconds": 30, "error_count_threshold": 2,
+                          "cooldown_seconds": 10, "check_interval_seconds": 15, "channels": []})
+        assert mgr._lag_threshold == 30
+        assert mgr._error_threshold == 2
+        assert mgr._cooldown == 10
