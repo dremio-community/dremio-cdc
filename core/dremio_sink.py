@@ -215,6 +215,13 @@ class DremioSink:
             deletes = [e for e in tevents if e.op == Operation.DELETE]
 
             if upserts and pks:
+                # Deduplicate by PK — keep last event per key to avoid
+                # "target row matched more than once" in Dremio MERGE
+                seen: Dict[tuple, ChangeEvent] = {}
+                for ev in upserts:
+                    key = tuple((ev.after or {}).get(pk) for pk in pks)
+                    seen[key] = ev
+                upserts = list(seen.values())
                 self._merge(table, schema, pks, upserts)
             elif upserts:
                 self._insert(table, schema, upserts)

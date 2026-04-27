@@ -652,6 +652,29 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
                 tables.extend(page["TableNames"])
             return tables
 
+        if src_type in ("sqlserver", "mssql"):
+            import pymssql
+            conn_cfg = cfg.get("connection", {})
+            conn = pymssql.connect(
+                server=conn_cfg.get("host", "localhost"),
+                port=int(conn_cfg.get("port", 1433)),
+                user=conn_cfg["user"],
+                password=conn_cfg.get("password", ""),
+                database=conn_cfg.get("database", ""),
+                tds_version="7.0",
+            )
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT TABLE_SCHEMA + '.' + TABLE_NAME
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_TYPE='BASE TABLE'
+                      AND TABLE_SCHEMA NOT IN ('sys','INFORMATION_SCHEMA')
+                    ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """)
+                tables = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return tables
+
         if src_type in ("pubsub", "datastream"):
             # No table introspection — tables are entered manually
             return []

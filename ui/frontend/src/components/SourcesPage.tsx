@@ -486,7 +486,13 @@ function SourceModal({ initial, onClose, onSaved }: {
                   <textarea style={{ ...S.input, marginTop: 8, height: 80, resize: 'vertical' }}
                     placeholder={isPubSub(type) ? 'orders-subscription\nuser-events-subscription' : isDatastream(type) ? 'HR.EMPLOYEES\nFINANCE.LEDGER\nSALES.ORDERS' : debeziumTablePlaceholder(type)}
                     value={tables.join('\n')}
-                    onChange={e => setTables(e.target.value.split('\n').filter(Boolean))}
+                    onChange={e => setTables(
+                      e.target.value
+                        .split(/[\n,]+/)
+                        .flatMap(line => line.trim().split(/\s+/))
+                        .map(t => t.trim())
+                        .filter(Boolean)
+                    )}
                   />
                 </div>
               )}
