@@ -222,7 +222,7 @@ class PostgresSource(CDCSource):
         conn_cfg = self._conn_cfg
         repl_conn = psycopg2.connect(
             host=conn_cfg.get("host", "localhost"),
-            port=conn_cfg.get("port", 5432),
+            port=int(conn_cfg.get("port", 5432)),
             dbname=conn_cfg["database"],
             user=conn_cfg["user"],
             password=conn_cfg.get("password", ""),

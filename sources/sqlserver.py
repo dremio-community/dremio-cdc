@@ -67,7 +67,7 @@ def _connect_pymssql(cfg):
     import pymssql
     return pymssql.connect(
         server=cfg.get("host", "localhost"),
-        port=cfg.get("port", 1433),
+        port=int(cfg.get("port", 1433)),
         user=cfg["user"],
         password=cfg.get("password", ""),
         database=cfg["database"],
@@ -79,7 +79,7 @@ def _connect_pyodbc(cfg):
     import pyodbc
     driver = cfg.get("driver", "ODBC Driver 17 for SQL Server")
     server = cfg.get("host", "localhost")
-    port   = cfg.get("port", 1433)
+    port   = int(cfg.get("port", 1433))
     conn_str = (
         f"DRIVER={{{driver}}};"
         f"SERVER={server},{port};"

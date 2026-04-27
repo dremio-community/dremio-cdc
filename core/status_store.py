@@ -111,12 +111,14 @@ class StatusStore:
                 w._bucket_start = now
             w._minute_bucket += count
 
-    def record_error(self, source: str, table: str):
+    def record_error(self, source: str, table: str, error: str = None):
         key = self._key(source, table)
         with self._lock:
             w = self._workers.get(key)
             if w:
                 w.error_count += 1
+                if error:
+                    w.error = error
 
     def set_batch_size(self, source: str, table: str, size: int):
         key = self._key(source, table)

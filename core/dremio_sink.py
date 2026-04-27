@@ -224,12 +224,23 @@ class DremioSink:
                     self._delete(table, pks, ev)
 
     def _escape(self, val: Any) -> str:
+        from datetime import date, datetime
+        from decimal import Decimal
         if val is None:
             return "NULL"
         if isinstance(val, bool):
             return "TRUE" if val else "FALSE"
+        if isinstance(val, Decimal):
+            return str(float(val))
         if isinstance(val, (int, float)):
             return str(val)
+        if isinstance(val, datetime):
+            ts = val.strftime('%Y-%m-%d %H:%M:%S') + f".{val.microsecond // 1000:03d}"
+            return f"CAST('{ts}' AS TIMESTAMP)"
+        if isinstance(val, date):
+            return f"CAST('{val.isoformat()}' AS DATE)"
+        if isinstance(val, bytes):
+            return "'" + val.hex() + "'"
         return "'" + str(val).replace("'", "''") + "'"
 
     def _merge(self, source_table: str, schema: List[ColumnSchema], pks: List[str], events: List[ChangeEvent]):
@@ -242,7 +253,7 @@ class DremioSink:
             row = dict(ev.after or {})
             row["_cdc_op"]     = ev.op.value
             row["_cdc_source"] = ev.source_name
-            row["_cdc_ts"]     = ev.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
+            row["_cdc_ts"]     = ev.timestamp
             vals = ", ".join(self._escape(row.get(c)) for c in all_cols)
             rows.append(f"({vals})")
 
@@ -277,7 +288,7 @@ WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
             row = dict(ev.after or {})
             row["_cdc_op"]     = ev.op.value
             row["_cdc_source"] = ev.source_name
-            row["_cdc_ts"]     = ev.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
+            row["_cdc_ts"]     = ev.timestamp
             vals = ", ".join(self._escape(row.get(c)) for c in all_cols)
             self._sql(f"INSERT INTO {path} ({col_list}) VALUES ({vals})")
 

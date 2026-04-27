@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ChevronDown, CheckCircle, Cloud, Database, Loader, Save, Zap } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, CheckCircle, Cloud, Database, Loader, Save, Zap } from 'lucide-react'
 import { getTarget, saveTarget, testTarget, getNamespaces, getSources, TargetConfig, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig, Source } from '../api/client'
 import SecretFieldInput from './SecretFieldInput'
 
@@ -15,7 +15,9 @@ export default function TargetPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
   const [saveErr, setSaveErr] = useState('')
+  const [cloudOpen, setCloudOpen] = useState(false)
   const [namespaces, setNamespaces] = useState<NamespaceItem[] | null>(null)
   const [nsOpen, setNsOpen] = useState(false)
   const [nsLoading, setNsLoading] = useState(false)
@@ -60,7 +62,7 @@ export default function TargetPage() {
   }
 
   const handleBrowseNs = async () => {
-    if (namespaces) { setNsOpen(o => !o); return }
+    if (namespaces && namespaces.length > 0) { setNsOpen(o => !o); return }
     setNsLoading(true)
     try {
       const r = await getNamespaces()
@@ -75,7 +77,8 @@ export default function TargetPage() {
     try {
       await saveTarget(cfg)
       setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
+      setSavedAt(new Date())
+      setTimeout(() => setSaved(false), 4000)
     } catch (e: any) {
       setSaveErr(e.message ?? 'Save failed')
     }
@@ -92,8 +95,19 @@ export default function TargetPage() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
           <button style={S.btnPrimary} onClick={handleSave} disabled={saving}>
             {saving ? <Loader size={13} /> : <Save size={13} />}
-            {saved ? 'Saved!' : 'Save'}
+            {saving ? 'Saving…' : 'Save'}
           </button>
+          {saved && savedAt && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#4ade80', fontSize: 12 }}>
+              <CheckCircle size={13} />
+              Saved at {savedAt.toLocaleTimeString()}
+            </div>
+          )}
+          {!saved && savedAt && (
+            <div style={{ fontSize: 11, color: '#475569' }}>
+              Last saved {savedAt.toLocaleTimeString()}
+            </div>
+          )}
           {saveErr && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f87171', fontSize: 12, maxWidth: 340, textAlign: 'right' }}>
               <AlertCircle size={13} />
@@ -141,13 +155,6 @@ export default function TargetPage() {
             <SecretFieldInput value={cfg.dremio.password ?? ''} onChange={v => updateDremio('password', v)} isPassword />
           </Field>
         </div>
-        <Field label="Personal Access Token (PAT) — overrides user/password">
-          <SecretFieldInput value={cfg.dremio.pat ?? ''} onChange={v => updateDremio('pat', v)} placeholder="For Dremio Cloud or Enterprise" isPassword />
-        </Field>
-        <Field label="Project ID (Dremio Cloud only)">
-          <input style={S.input} value={(cfg.dremio as any).project_id ?? ''} onChange={e => updateDremio('project_id' as any, e.target.value)} placeholder="e.g. 957704f5-4495-42ad-94de-671bf7790610" />
-          <div style={S.hint}>Required for Mode A with Dremio Cloud. Find it in your Dremio Cloud project URL.</div>
-        </Field>
         {cfg.sink_mode === 'dremio' && (
           <Field label="Target namespace">
             <div ref={nsRef} style={{ position: 'relative' }}>
@@ -162,19 +169,46 @@ export default function TargetPage() {
               </div>
               {nsOpen && namespaces && (
                 <div style={S.nsDropdown}>
-                  {namespaces.length === 0 && <div style={{ color: '#64748b', padding: '8px 12px', fontSize: 13 }}>No sources or spaces found</div>}
-                  {namespaces.map(ns => (
+                  {namespaces.length === 0 && <div style={{ color: '#64748b', padding: '8px 12px', fontSize: 13 }}>No sources found</div>}
+                  {namespaces.filter(ns => ns.type === 'source').map(ns => (
                     <div key={ns.name} style={S.nsOption} onClick={() => { updateDremio('target_namespace', ns.name); setNsOpen(false) }}>
-                      <span style={{ ...S.nsBadge, ...(ns.type === 'source' ? S.nsBadgeSource : S.nsBadgeSpace) }}>{ns.type}</span>
+                      <span style={{ ...S.nsBadge, ...S.nsBadgeSource }}>source</span>
                       <span style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0' }}>{ns.name}</span>
                     </div>
                   ))}
+                  {namespaces.some(ns => ns.type === 'space') && (
+                    <div style={{ padding: '6px 12px', fontSize: 11, color: '#64748b', borderTop: '1px solid #1e293b' }}>
+                      Spaces cannot be used as CDC targets (no CREATE TABLE support)
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-            <div style={S.hint}>Dremio source where CDC tables are created. Must be Iceberg-capable. Click Browse to pick from your Dremio instance.</div>
+            <div style={S.hint}>Dremio source where CDC tables are created. Must be a writable source (Hudi, Delta, etc.) — not a Space. Click Browse to pick.</div>
           </Field>
         )}
+
+        {/* Cloud / Enterprise options — collapsed by default */}
+        <div style={{ marginTop: 4 }}>
+          <button
+            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: 12, padding: '4px 0' }}
+            onClick={() => setCloudOpen(o => !o)}
+          >
+            {cloudOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            Cloud / Enterprise options (PAT, Project ID)
+          </button>
+          {cloudOpen && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Field label="Personal Access Token (PAT) — overrides user/password">
+                <SecretFieldInput value={cfg.dremio.pat ?? ''} onChange={v => updateDremio('pat', v)} placeholder="For Dremio Cloud or Enterprise" isPassword />
+              </Field>
+              <Field label="Project ID (Dremio Cloud only)">
+                <input style={S.input} value={(cfg.dremio as any).project_id ?? ''} onChange={e => updateDremio('project_id' as any, e.target.value)} placeholder="e.g. 957704f5-4495-42ad-94de-671bf7790610" />
+                <div style={S.hint}>Required for Mode A with Dremio Cloud. Find it in your Dremio Cloud project URL.</div>
+              </Field>
+            </div>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
           <button style={S.btnSecondary} onClick={handleTest} disabled={testing}>
             {testing ? <Loader size={13} /> : null} Test connection

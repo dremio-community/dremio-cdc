@@ -108,16 +108,22 @@ def _dremio_headers(dremio_cfg: dict):
 
 
 def _validate_dremio_namespace(dremio_cfg: dict, namespace: str) -> Optional[str]:
-    """Return error string if namespace doesn't exist in Dremio, None if OK."""
+    """Return error string if namespace is invalid, None if OK."""
     try:
         import requests as req
         headers, _, catalog_url = _dremio_headers(dremio_cfg)
         r = req.get(catalog_url, headers=headers, timeout=8)
         r.raise_for_status()
-        names = [item.get("path", [None])[0] for item in r.json().get("data", [])]
-        if namespace not in names:
-            available = ", ".join(n for n in names if n)
-            return f"Namespace '{namespace}' not found in Dremio. Available: {available or 'none'}"
+        items = r.json().get("data", [])
+        by_name = {(item.get("path") or [None])[0]: item.get("containerType", item.get("type", "")) for item in items}
+        if namespace not in by_name:
+            sources = [n for n, t in by_name.items() if n and t == "SOURCE"]
+            return f"Namespace '{namespace}' not found in Dremio. Available sources: {', '.join(sources) or 'none'}"
+        ns_type = by_name[namespace]
+        if ns_type == "SPACE":
+            sources = [n for n, t in by_name.items() if n and t == "SOURCE"]
+            return (f"'{namespace}' is a Dremio Space, which doesn't support CREATE TABLE. "
+                    f"Use a writable source instead (e.g. {sources[0] if sources else 'hudi_local'}).")
     except Exception as exc:
         return f"Could not validate namespace: {exc}"
     return None
@@ -141,7 +147,12 @@ def _start_engine():
 
     with _engine_lock:
         if _engine_thread and _engine_thread.is_alive():
-            return {"error": "Engine already running"}, 409
+            # Allow restart if engine state is stopped/error (thread is winding down)
+            state = _status_store.get_engine_state()
+            if state not in ("stopped", "error", None):
+                return {"error": "Engine already running"}, 409
+            # Thread lingering after stop — join briefly then proceed
+            _engine_thread.join(timeout=3)
 
     _engine_thread = threading.Thread(target=_engine_run, args=(cfg,), daemon=True)
     _engine_thread.start()
@@ -149,11 +160,22 @@ def _start_engine():
 
 
 def _stop_engine():
+    global _engine_thread
     with _engine_lock:
         eng = _engine
     if eng:
-        threading.Thread(target=eng.stop, daemon=True).start()
+        def _do_stop():
+            global _engine_thread
+            eng.stop()
+            if _engine_thread:
+                _engine_thread.join(timeout=10)
+            _engine_thread = None
+        threading.Thread(target=_do_stop, daemon=True).start()
         return {"status": "stopping"}, 200
+    # Engine object gone but thread may still linger — clear it so Start works
+    with _engine_lock:
+        if _engine_thread and not _engine_thread.is_alive():
+            _engine_thread = None
     return {"error": "Engine not running"}, 409
 
 
@@ -590,7 +612,7 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
             import pymysql
             conn = pymysql.connect(
                 host=cfg["connection"].get("host", "localhost"),
-                port=cfg["connection"].get("port", 3306),
+                port=int(cfg["connection"].get("port", 3306)),
                 user=cfg["connection"]["user"],
                 password=cfg["connection"].get("password", ""),
                 database=db,
@@ -710,11 +732,10 @@ def api_target_namespaces():
         r.raise_for_status()
         namespaces = []
         for item in r.json().get("data", []):
-            ns_type = item.get("type", "")
-            if ns_type in ("SOURCE", "SPACE"):
-                name = (item.get("path") or [None])[0]
-                if name:
-                    namespaces.append({"name": name, "type": ns_type.lower()})
+            ns_type = item.get("containerType", item.get("type", ""))
+            name = (item.get("path") or [None])[0]
+            if name:
+                namespaces.append({"name": name, "type": ns_type.lower()})
         return jsonify({"ok": True, "namespaces": namespaces})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})

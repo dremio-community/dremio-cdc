@@ -318,7 +318,7 @@ class TableWorker(threading.Thread):
                 self._check_schema_drift()
 
         except Exception as exc:
-            self.status.record_error(self.source.name, self.table)
+            self.status.record_error(self.source.name, self.table, str(exc))
             logger.error(
                 "[%s/%s] Flush failed (%d events): %s",
                 self.source.name, self.table, len(batch), exc,

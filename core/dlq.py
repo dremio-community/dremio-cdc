@@ -17,7 +17,8 @@ import logging
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from core.event import ChangeEvent, ColumnSchema, Operation
@@ -27,13 +28,30 @@ logger = logging.getLogger(__name__)
 
 # ── Event serialization ───────────────────────────────────────────────────────
 
+def _coerce(obj: Any) -> Any:
+    """Recursively convert non-JSON-serializable DB types to JSON-safe values."""
+    if isinstance(obj, dict):
+        return {k: _coerce(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_coerce(v) for v in obj]
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, bytes):
+        return obj.hex()
+    return obj
+
+
 def _serialize_event(ev: ChangeEvent) -> dict:
     return {
         "op":           ev.op.value,
         "source_name":  ev.source_name,
         "source_table": ev.source_table,
-        "before":       ev.before,
-        "after":        ev.after,
+        "before":       _coerce(ev.before),
+        "after":        _coerce(ev.after),
         "schema": [
             {"name": c.name, "data_type": c.data_type,
              "nullable": c.nullable, "primary_key": c.primary_key}
