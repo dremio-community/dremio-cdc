@@ -56,6 +56,7 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 | **SQL Server** | Debezium Server → HTTP adapter | Alternative; SQL Server Agent + CDC enabled |
 | **DB2** | Debezium Server → HTTP adapter | ASN Capture required |
 | **CockroachDB** | CHANGEFEED (native) | `kv.rangefeed.enabled = true` required |
+| **Google Cloud Spanner** | Change Streams | Auto-created on first connect |
 
 ---
 
@@ -307,6 +308,42 @@ sources:
     tables:
       - Orders
       - Customers
+```
+
+</details>
+
+### Google Cloud Spanner
+
+Spanner CDC uses native **Change Streams** — no Debezium or external tooling required. The connector auto-creates a change stream covering all tables on first connect using `OLD_AND_NEW_VALUES` capture, giving full before/after images for UPDATEs.
+
+```bash
+# Grant the service account the required roles
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:SA_EMAIL" \
+  --role="roles/spanner.databaseReader"
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:SA_EMAIL" \
+  --role="roles/spanner.databaseUser"   # needed to create the change stream
+```
+
+**In the UI:** Sources → Add Source → Google Cloud Spanner. Enter project ID, instance ID, database name, and optionally a path to a service account key JSON (defaults to Application Default Credentials).
+
+<details>
+<summary>Headless YAML</summary>
+
+```yaml
+sources:
+  - name: spanner_prod
+    type: spanner
+    connection:
+      project:      my-gcp-project
+      instance:     my-spanner-instance
+      database:     my-database
+      credentials_file: /path/to/sa-key.json   # optional; omit to use ADC
+      change_stream: DremiocdcStream            # auto-created if absent
+    tables:
+      - Employees
+      - Orders
 ```
 
 </details>
@@ -735,7 +772,8 @@ dremio-cdc/
 │   ├── debezium.py             # HTTP adapter for Debezium Server (Oracle, SQL Server, DB2)
 │   ├── sqlserver.py            # SQL Server CDC via pyodbc
 │   ├── snowflake_src.py        # Snowflake native STREAM objects
-│   └── cockroachdb.py          # CockroachDB CHANGEFEED
+│   ├── cockroachdb.py          # CockroachDB CHANGEFEED
+│   └── spanner.py              # Google Cloud Spanner Change Streams
 │
 ├── ui/
 │   ├── backend/app.py          # Flask REST API + SPA server

@@ -226,7 +226,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # Iceberg REST catalog (lightweight — for local dev against MinIO)
+  # ── Google Cloud Spanner Emulator ────────────────────────────────────────────
+  # Emulates Spanner gRPC (9010) and REST (9020) APIs locally.
+  # The Python client connects via SPANNER_EMULATOR_HOST=localhost:9010.
+  spanner-emulator:
+    image: gcr.io/cloud-spanner-emulator/emulator:latest
+    ports:
+      - "9010:9010"
+      - "9020:9020"
+
+  # ── Iceberg REST catalog (lightweight — for local dev against MinIO)
   # Exposes the Iceberg REST spec at http://localhost:8181
   # In production, replace this with Dremio Open Catalog (Apache Polaris):
   #   uri: https://catalog.dremio.cloud/api/iceberg  (Dremio Cloud)

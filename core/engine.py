@@ -80,6 +80,7 @@ def _load_sources():
     from sources.sqlserver   import SQLServerSource
     from sources.snowflake_src import SnowflakeSource
     from sources.cockroachdb import CockroachDBSource
+    from sources.spanner     import SpannerSource
 
     register_source("postgres",    PostgresSource)
     register_source("mysql",       MySQLSource)
@@ -92,6 +93,7 @@ def _load_sources():
     register_source("sqlserver",   SQLServerSource)
     register_source("snowflake",   SnowflakeSource)
     register_source("cockroachdb", CockroachDBSource)
+    register_source("spanner",     SpannerSource)
 
 
 class TableWorker(threading.Thread):

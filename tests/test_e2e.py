@@ -4419,3 +4419,321 @@ class TestDb2DebeziumLive:
         assert events[0].offset is not None
         assert events[0].offset.get("lsn") is not None, \
             f"commit_lsn missing from offset: {events[0].offset}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestSpannerLive — Google Cloud Spanner emulator integration tests
+# Requires: docker compose up -d spanner-emulator
+# The emulator listens on localhost:9010 (gRPC) / 9020 (REST).
+# SPANNER_EMULATOR_HOST is set programmatically before connecting.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SPANNER_CFG = {
+    "connection": {
+        "project":       "test-project",
+        "instance":      "test-instance",
+        "database":      "testdb",
+        "change_stream": "DremiocdcStream",
+    }
+}
+
+def _spanner_admin():
+    """Return (InstanceAdminClient, DatabaseAdminClient) pointed at the emulator."""
+    import os
+    os.environ.setdefault("SPANNER_EMULATOR_HOST", "localhost:9010")
+    from google.cloud import spanner_admin_instance_v1, spanner_admin_database_v1
+    from google.api_core.client_options import ClientOptions
+    opts = ClientOptions(api_endpoint="localhost:9010")
+    inst_client = spanner_admin_instance_v1.InstanceAdminClient(client_options=opts)
+    db_client   = spanner_admin_database_v1.DatabaseAdminClient(client_options=opts)
+    return inst_client, db_client
+
+
+def _spanner_db():
+    """Return a google.cloud.spanner Database handle for the emulator testdb."""
+    import os
+    os.environ.setdefault("SPANNER_EMULATOR_HOST", "localhost:9010")
+    from google.cloud import spanner as gcs
+    client   = gcs.Client(project="test-project")
+    instance = client.instance("test-instance")
+    return instance.database("testdb")
+
+
+def _spanner_wait_for_events(src, table: str, n: int, timeout: int = 60):
+    """Collect up to n non-None streaming events from src.stream(), with timeout."""
+    collected = []
+    done      = threading.Event()
+
+    def _run():
+        for ev in src.stream(table, None):
+            if ev is None:
+                if done.is_set():
+                    break
+                continue
+            collected.append(ev)
+            if len(collected) >= n:
+                done.set()
+                break
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    done.set()
+    return collected
+
+
+@pytest.mark.spanner
+class TestSpannerLive:
+    """
+    End-to-end: Spanner emulator → SpannerSource → parsed ChangeEvents.
+    Requires: docker compose up -d spanner-emulator
+    """
+
+    @classmethod
+    def setup_class(cls):
+        import os, time
+        os.environ["SPANNER_EMULATOR_HOST"] = "localhost:9010"
+
+        # Use the emulator's REST API (port 9020) for admin setup — avoids
+        # TLS handshake failures that occur when pointing gRPC admin clients
+        # at the emulator's plain-HTTP gRPC endpoint.
+        REST = "http://localhost:9020/v1"
+
+        # Wait for emulator REST API to be ready
+        for _ in range(30):
+            try:
+                r = requests.get(f"{REST}/projects/test-project/instances", timeout=2)
+                if r.status_code in (200, 404):
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            raise RuntimeError("Spanner emulator REST API not ready after 30s")
+
+        # Create instance (idempotent)
+        requests.post(
+            f"{REST}/projects/test-project/instances",
+            json={
+                "instanceId": "test-instance",
+                "instance": {
+                    "config": "projects/test-project/instanceConfigs/emulator-config",
+                    "displayName": "test-instance",
+                    "nodeCount": 1,
+                },
+            },
+            timeout=10,
+        )
+
+        # Create database + table (idempotent)
+        requests.post(
+            f"{REST}/projects/test-project/instances/test-instance/databases",
+            json={
+                "createStatement": "CREATE DATABASE testdb",
+                "extraStatements": [
+                    "CREATE TABLE IF NOT EXISTS Employees ("
+                    "  Id INT64 NOT NULL, Name STRING(100),"
+                    "  Email STRING(100), Salary FLOAT64"
+                    ") PRIMARY KEY (Id)",
+                ],
+            },
+            timeout=10,
+        )
+        time.sleep(1)  # let DDL propagate
+
+        # Seed rows via SpannerSource (which uses insecure channel via emulator env var)
+        from google.auth.credentials import AnonymousCredentials
+        from google.cloud import spanner as gcs
+        anon      = AnonymousCredentials()
+        gcs_client = gcs.Client(project="test-project", credentials=anon)
+        db = gcs_client.instance("test-instance").database("testdb")
+        with db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[
+                    (1, "Alice",   "alice@example.com",   75000.0),
+                    (2, "Bob",     "bob@example.com",     85000.0),
+                    (3, "Charlie", "charlie@example.com", 95000.0),
+                ],
+            )
+
+        # Connect source (auto-creates change stream via DDL)
+        from sources.spanner import SpannerSource
+        cls.src = SpannerSource("spanner_test", SPANNER_CFG)
+        cls.src.connect()
+        cls._gcs_client = gcs_client
+
+    @classmethod
+    def teardown_class(cls):
+        cls.src.close()
+
+    def setup_method(self):
+        # Drain any queued events between tests
+        self.src._stop_flag.clear()
+        self.src._stream_thread = None
+        self.src._table_queues.clear()
+
+    # ── 1. Schema ─────────────────────────────────────────────────────────────
+
+    def test_get_schema(self):
+        schema = self.src.get_schema("Employees")
+        names  = [c.name for c in schema]
+        assert "Id"     in names
+        assert "Name"   in names
+        assert "Salary" in names
+        pk_cols = [c.name for c in schema if c.primary_key]
+        assert "Id" in pk_cols
+
+    # ── 2. Snapshot ───────────────────────────────────────────────────────────
+
+    def test_snapshot_rows_arrive(self):
+        events = list(self.src.snapshot("Employees"))
+        assert len(events) >= 3
+        assert all(e.op == Operation.SNAPSHOT for e in events)
+        names = {e.after["Name"] for e in events if e.after}
+        assert {"Alice", "Bob", "Charlie"}.issubset(names)
+
+    # ── 3. Streaming insert ───────────────────────────────────────────────────
+
+    def test_streaming_insert(self):
+        db = self.__class__._gcs_client.instance("test-instance").database("testdb")
+
+        events = []
+        done   = threading.Event()
+
+        def _stream():
+            for ev in self.src.stream("Employees", None):
+                if ev is None:
+                    if done.is_set():
+                        break
+                    continue
+                events.append(ev)
+                if any(e.after and e.after.get("Name") == "Diana" for e in events):
+                    done.set()
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(3)  # let change stream start
+
+        with db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(101, "Diana", "diana@test.com", 70000.0)],
+            )
+
+        done.wait(timeout=30)
+        self.src._stop_flag.set()
+        t.join(timeout=5)
+
+        ins = next((e for e in events
+                    if e.after and e.after.get("Name") == "Diana"), None)
+        assert ins is not None, "Event for Diana not received"
+
+    # ── 4. Streaming update ───────────────────────────────────────────────────
+
+    def test_streaming_update(self):
+        db = self.__class__._gcs_client.instance("test-instance").database("testdb")
+
+        # Ensure row exists
+        with db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(102, "Eve", "eve@test.com", 72000.0)],
+            )
+
+        events = []
+        done   = threading.Event()
+
+        def _stream():
+            for ev in self.src.stream("Employees", None):
+                if ev is None:
+                    if done.is_set():
+                        break
+                    continue
+                events.append(ev)
+                if any(e.op == Operation.UPDATE and e.after and e.after.get("Name") == "Eve"
+                       for e in events):
+                    done.set()
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(3)
+
+        with db.batch() as batch:
+            batch.update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(102, "Eve", "eve@test.com", 82000.0)],
+            )
+
+        done.wait(timeout=30)
+        self.src._stop_flag.set()
+        t.join(timeout=5)
+
+        upd = next((e for e in events
+                    if e.op == Operation.UPDATE and e.after and e.after.get("Name") == "Eve"), None)
+        assert upd is not None, "UPDATE event for Eve not received"
+        assert upd.after.get("Salary") == 82000.0, f"Expected salary 82000, got {upd.after.get('Salary')}"
+
+    # ── 5. Streaming delete ───────────────────────────────────────────────────
+
+    def test_streaming_delete(self):
+        db = self.__class__._gcs_client.instance("test-instance").database("testdb")
+
+        with db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(103, "Frank", "frank@test.com", 65000.0)],
+            )
+
+        events = []
+        done   = threading.Event()
+
+        def _stream():
+            for ev in self.src.stream("Employees", None):
+                if ev is None:
+                    if done.is_set():
+                        break
+                    continue
+                events.append(ev)
+                if any(e.op == Operation.DELETE for e in events):
+                    done.set()
+                    break
+
+        t = threading.Thread(target=_stream, daemon=True)
+        t.start()
+        time.sleep(3)
+
+        from google.cloud.spanner_v1 import KeySet
+        with db.batch() as batch:
+            batch.delete("Employees", KeySet(keys=[[103]]))
+
+        done.wait(timeout=30)
+        self.src._stop_flag.set()
+        t.join(timeout=5)
+
+        del_ev = next((e for e in events if e.op == Operation.DELETE), None)
+        assert del_ev is not None, "DELETE event not received"
+        assert del_ev.after is None
+
+    # ── 6. Offset is populated ────────────────────────────────────────────────
+
+    def test_offset_populated(self):
+        db = self.__class__._gcs_client.instance("test-instance").database("testdb")
+
+        with db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(104, "Grace", "grace@test.com", 60000.0)],
+            )
+
+        events = _spanner_wait_for_events(self.src, "Employees", 1, timeout=30)
+        assert events, "No streaming event received"
+        assert events[0].offset is not None, "offset should not be None"
