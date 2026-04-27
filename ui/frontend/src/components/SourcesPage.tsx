@@ -23,7 +23,7 @@ const MASK_LABELS: Record<string, string> = {
   mask_name:   'Name   (J***)',
 }
 
-const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium', 'spanner', 'pubsub'] as const
+const SOURCE_TYPES = ['postgres', 'mysql', 'mariadb', 'mongodb', 'dynamodb', 'sqlserver', 'snowflake', 'cockroachdb', 'oracle', 'db2', 'debezium', 'spanner', 'pubsub', 'datastream'] as const
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([])
@@ -169,7 +169,8 @@ function SourceModal({ initial, onClose, onSaved }: {
     ({ ...defaultConn(t), ...Object.fromEntries(Object.entries(existing ?? {}).map(([k, v]) => [k, String(v)])) })
   const isDebeziumLike = (t: string) => t === 'debezium' || t === 'oracle' || t === 'db2'
   const isPubSub = (t: string) => t === 'pubsub'
-  const isManualTables = (t: string) => isDebeziumLike(t) || isPubSub(t)
+  const isDatastream = (t: string) => t === 'datastream'
+  const isManualTables = (t: string) => isDebeziumLike(t) || isPubSub(t) || isDatastream(t)
   const [conn, setConn] = useState<Record<string, string>>(() =>
     isDebeziumLike(initial?.type ?? '')
       ? { listen_port: String(initial?.listen_port ?? defaultDebeziumPort(initial?.type ?? 'debezium')) }
@@ -322,6 +323,20 @@ function SourceModal({ initial, onClose, onSaved }: {
                 </div>
               </div>
             )}
+            {isDatastream(type) && (
+              <div style={S.setupHint}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                  ☁️ Google Cloud Datastream — GCS / Avro path
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  Reads Avro (or NDJSON) files written by Datastream into GCS. Specify tables as
+                  <code style={{ color: '#fdba74', margin: '0 4px' }}>SCHEMA.TABLE</code>
+                  (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>).
+                  Leave service account path blank to use Application Default Credentials (ADC).
+                  Set <code style={{ color: '#fdba74', margin: '0 4px' }}>STORAGE_EMULATOR_HOST</code> for local testing.
+                </div>
+              </div>
+            )}
 
             {fields.map(f => (
               <div style={S.field} key={f.key}>
@@ -352,6 +367,8 @@ function SourceModal({ initial, onClose, onSaved }: {
                     ? <><CheckCircle size={14} color="#4ade80" /> Listener ready on port {conn.listen_port ?? 8765} — Debezium Server will push events here</>
                     : isPubSub(type)
                     ? <><CheckCircle size={14} color="#4ade80" /> Connected to Pub/Sub project — enter subscription names below</>
+                    : isDatastream(type)
+                    ? <><CheckCircle size={14} color="#4ade80" /> GCS bucket reachable — enter tables as SCHEMA.TABLE below</>
                     : <><CheckCircle size={14} color="#4ade80" /> Connected — found {available.length} tables</>
                   : <><AlertCircle size={14} color="#f87171" /> {testResult.error}</>}
               </div>
@@ -366,7 +383,7 @@ function SourceModal({ initial, onClose, onSaved }: {
               </button>
               {(testResult?.ok || isManualTables(type)) && (
                 <button style={S.btnPrimary} onClick={() => setStep('tables')}>
-                  {isDebeziumLike(type) ? 'Enter tables →' : isPubSub(type) ? 'Enter subscriptions →' : 'Choose tables →'}
+                  {isDebeziumLike(type) ? 'Enter tables →' : isPubSub(type) ? 'Enter subscriptions →' : isDatastream(type) ? 'Enter tables →' : 'Choose tables →'}
                 </button>
               )}
             </div>
@@ -461,11 +478,13 @@ function SourceModal({ initial, onClose, onSaved }: {
                 <div style={{ color: '#64748b', padding: 16 }}>
                   {isPubSub(type)
                     ? <>Enter one Pub/Sub subscription name per line. Each subscription becomes an Iceberg table with the same name (hyphens converted to underscores):</>
+                    : isDatastream(type)
+                    ? <>Enter tables as <code style={{ color: '#fdba74' }}>SCHEMA.TABLE</code> — one per line (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>):</>
                     : isDebeziumLike(type)
                     ? <>Enter table names exactly as Debezium sends them ({debeziumTableHint(type)}):</>
                     : <>No tables found — type table names manually:</>}
                   <textarea style={{ ...S.input, marginTop: 8, height: 80, resize: 'vertical' }}
-                    placeholder={isPubSub(type) ? 'orders-subscription\nuser-events-subscription' : debeziumTablePlaceholder(type)}
+                    placeholder={isPubSub(type) ? 'orders-subscription\nuser-events-subscription' : isDatastream(type) ? 'HR.EMPLOYEES\nFINANCE.LEDGER\nSALES.ORDERS' : debeziumTablePlaceholder(type)}
                     value={tables.join('\n')}
                     onChange={e => setTables(e.target.value.split('\n').filter(Boolean))}
                   />
@@ -685,6 +704,14 @@ function connFields(type: string): FieldDef[] {
       { key: 'max_messages_per_pull',  label: 'Max messages per pull',                default: '100' },
       { key: 'pull_timeout_seconds',   label: 'Pull timeout (seconds)',               default: '5' },
     ]
+    case 'datastream': return [
+      { key: 'project_id',             label: 'GCP Project ID',                      placeholder: 'my-gcp-project' },
+      { key: 'bucket',                 label: 'GCS Bucket',                           placeholder: 'my-datastream-bucket' },
+      { key: 'path_prefix',            label: 'Path prefix (optional)',               placeholder: 'datastream/prod' },
+      { key: 'credentials_file',       label: 'Service account key path (optional)', placeholder: '/path/to/key.json' },
+      { key: 'poll_interval_seconds',  label: 'Poll interval (seconds)',              default: '10' },
+      { key: 'file_format',            label: 'File format',                          default: 'avro' },
+    ]
     default: return []
   }
 }
@@ -727,6 +754,7 @@ function typeColor(type: string): React.CSSProperties {
     debezium:    { background: '#2d1a0a', color: '#fdba74' },
     spanner:     { background: '#0a2a1f', color: '#34d399' },
     pubsub:      { background: '#1a2637', color: '#38bdf8' },
+    datastream:  { background: '#1a2637', color: '#7dd3fc' },
   }
   return map[type] ?? {}
 }

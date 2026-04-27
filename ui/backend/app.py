@@ -627,8 +627,8 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
                 tables.extend(page["TableNames"])
             return tables
 
-        if src_type == "pubsub":
-            # No table introspection for Pub/Sub — subscriptions are entered manually
+        if src_type in ("pubsub", "datastream"):
+            # No table introspection — tables are entered manually
             return []
 
     except Exception as exc:
@@ -657,7 +657,7 @@ def api_target_put():
     # Validate sink_mode compatibility with configured sources
     new_sink_mode = body.get("sink_mode", cfg.get("options", {}).get("sink_mode", "dremio"))
     if new_sink_mode == "dremio":
-        _MODE_B_REQUIRED = {"pubsub", "spanner"}
+        _MODE_B_REQUIRED = {"pubsub", "spanner", "datastream"}
         incompatible = [
             s["name"] for s in cfg.get("sources", [])
             if s.get("type", "") in _MODE_B_REQUIRED

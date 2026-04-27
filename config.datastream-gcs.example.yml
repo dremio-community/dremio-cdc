@@ -1,0 +1,79 @@
+# Dremio CDC — Google Cloud Datastream → GCS → Iceberg (Path 2)
+#
+# Datastream writes Avro/JSON files to GCS. This connector polls GCS for new
+# files and writes them to Iceberg tables in Dremio Open Catalog.
+#
+# GCS path layout (Datastream default):
+#   gs://{bucket}/{path_prefix}/{SCHEMA}/{TABLE}/YYYY/MM/DD/HH/{seq}.avro
+#
+# Each table entry is a "SCHEMA.TABLE" name matching your Datastream stream
+# config (e.g. "HR.EMPLOYEES", "public.orders").
+#
+# Prerequisites:
+#   1. A Datastream stream configured with GCS destination
+#   2. A service account with roles/storage.objectViewer on the bucket
+#   3. pip install google-cloud-storage fastavro
+#
+# Set snapshot_on_first_run: false — Datastream handles its own full-load
+# backfill and writes it as INSERT events in GCS. stream() processes those
+# files automatically on first run.
+
+# ── Dremio connection ─────────────────────────────────────────────────────────
+dremio:
+  host:             localhost
+  port:             9047
+  ssl:              false
+  user:             admin
+  password:         ${DREMIO_PASSWORD}
+  target_namespace: cdc
+
+# ── Datastream (GCS) source ───────────────────────────────────────────────────
+sources:
+
+  - name: datastream_prod
+    type: datastream
+
+    connection:
+      project_id:             my-gcp-project-id
+      bucket:                 my-datastream-bucket
+      path_prefix:            datastream/prod      # root path set in Datastream destination config
+      # credentials_file:     /path/to/sa.json     # omit to use ADC
+      poll_interval_seconds:  10                   # how often to check GCS for new files
+      file_format:            avro                 # avro (default) or json
+
+    # Each entry is "SCHEMA.TABLE" matching your Datastream stream.
+    # Maps to GCS path: {path_prefix}/{SCHEMA}/{TABLE}/YYYY/MM/DD/HH/{seq}.avro
+    tables:
+      - HR.EMPLOYEES
+      - HR.DEPARTMENTS
+      - FINANCE.LEDGER
+      - public.orders          # PostgreSQL lowercase schema/table names
+
+# ── Global options ────────────────────────────────────────────────────────────
+options:
+  sink_mode:              iceberg   # Datastream requires Mode B (Iceberg direct write)
+  batch_size:             1000
+  batch_timeout_seconds:  15
+  snapshot_on_first_run:  false     # Datastream handles backfill via GCS INSERT events
+  offset_db_path:         ./cdc_offsets.db
+  schema_db_path:         ./cdc_schemas.db
+  log_level:              INFO
+
+# ── Iceberg / Dremio Open Catalog ─────────────────────────────────────────────
+iceberg:
+  type:               rest
+  uri:                https://catalog.dremio.cloud/api/iceberg
+  token:              ${DREMIO_PAT}
+  warehouse:          my-project-name
+  target_namespace:   cdc
+  write_mode:         merge     # merge = upsert by PK; append = full event history
+
+  # sort_by: Iceberg sort order — Dremio uses this as a clustering key.
+  # Use your main filter column (timestamp, tenant ID, etc.).
+  sort_by:            _cdc_ts
+
+# ── Metadata columns written to every row automatically ───────────────────────
+#   _cdc_op         — insert / update / delete
+#   _cdc_source     — connector name from config
+#   _cdc_ts         — Datastream source event timestamp
+#   _cdc_ingest_ts  — wall-clock time the CDC engine processed this row

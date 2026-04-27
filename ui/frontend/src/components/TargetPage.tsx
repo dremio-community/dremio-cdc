@@ -336,8 +336,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // Sources that require Mode B (Iceberg) — Mode A won't work correctly with these
 const MODE_B_REQUIRED: Record<string, string> = {
-  pubsub:  'Pub/Sub is a high-throughput streaming source — Mode A (SQL MERGE) is too slow and misses sort_by clustering and _cdc_ingest_ts metadata. Use Mode B (Open Catalog).',
-  spanner: 'Spanner Change Streams produce continuous high-volume events. Mode B (Open Catalog) is strongly recommended for throughput and schema evolution.',
+  pubsub:     'Pub/Sub is a high-throughput streaming source — Mode A (SQL MERGE) is too slow and misses sort_by clustering and _cdc_ingest_ts metadata. Use Mode B (Open Catalog).',
+  spanner:    'Spanner Change Streams produce continuous high-volume events. Mode B (Open Catalog) is strongly recommended for throughput and schema evolution.',
+  datastream: 'Datastream GCS files are polled continuously — Mode B (Open Catalog / PyIceberg) is required for correct offset tracking and schema evolution.',
 }
 
 function CompatWarnings({ sources, sinkMode }: { sources: Source[]; sinkMode: string }) {

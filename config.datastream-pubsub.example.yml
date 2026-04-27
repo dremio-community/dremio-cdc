@@ -1,0 +1,98 @@
+# Dremio CDC — Google Cloud Datastream → Pub/Sub → Iceberg (Path 1)
+#
+# Datastream publishes change events as JSON messages to a Pub/Sub topic.
+# The existing pubsub connector handles delivery — no new code needed.
+#
+# Datastream Pub/Sub message format:
+#   {
+#     "payload": { ...column values... },
+#     "metadata": {
+#       "timestamp":    "2026-04-27T10:00:00Z",
+#       "record-type":  "data",
+#       "operation":    "INSERT" | "UPDATE" | "DELETE",
+#       "partition-token": "...",
+#       "schema":       "HR",
+#       "table":        "EMPLOYEES",
+#       "source-timestamp": "..."
+#     }
+#   }
+#
+# The pubsub connector flattens this via op_field and op_map config below.
+#
+# Path 1 vs Path 2 trade-offs:
+#   Path 1 (Pub/Sub): sub-second latency, simpler setup, but messages expire
+#     after 7 days max — ensure your subscription retention is long enough.
+#   Path 2 (GCS):     durable replay window (GCS files kept as long as you want),
+#     slightly higher latency (poll interval), handles large initial backfills
+#     better. Use for high-volume or business-critical pipelines.
+#
+# Prerequisites:
+#   1. Datastream stream with Pub/Sub destination configured
+#   2. A Pub/Sub subscription on the Datastream output topic
+#   3. Service account with roles/pubsub.subscriber
+#   4. pip install google-cloud-pubsub
+
+# ── Dremio connection ─────────────────────────────────────────────────────────
+dremio:
+  host:             localhost
+  port:             9047
+  ssl:              false
+  user:             admin
+  password:         ${DREMIO_PASSWORD}
+  target_namespace: cdc
+
+# ── Datastream → Pub/Sub source ───────────────────────────────────────────────
+sources:
+
+  - name: datastream_pubsub
+    type: pubsub
+
+    connection:
+      project_id:              my-gcp-project-id
+      # credentials_file:      /path/to/sa.json     # omit to use ADC
+      ack_deadline_seconds:    120
+      max_messages_per_pull:   100
+      pull_timeout_seconds:    5
+
+    # Each entry is a Pub/Sub subscription name.
+    # Datastream writes all tables from one stream to one topic —
+    # create one subscription per table (filtered by metadata.table) in Pub/Sub,
+    # or use one subscription and let the engine demux by source_table.
+    tables:
+      - datastream-employees-sub
+      - datastream-departments-sub
+
+    # Datastream wraps data in a payload envelope.
+    # op_field must reference the nested operation field.
+    # Note: if Datastream sends flat JSON (no payload wrapper), remove the
+    # payload. prefix and adjust op_field to "metadata.operation" directly.
+    op_field:   metadata.operation
+    op_map:
+      INSERT: insert
+      UPDATE: update
+      DELETE: delete
+      READ:   insert   # Datastream uses READ for backfill rows
+
+    # primary_key_field should match the PK in your source table.
+    # Datastream does not embed PK info in the Pub/Sub message envelope.
+    primary_key_field: id
+
+# ── Global options ────────────────────────────────────────────────────────────
+options:
+  sink_mode:              iceberg
+  batch_size:             500
+  batch_timeout_seconds:  10
+  snapshot_on_first_run:  false     # Datastream handles backfill
+  offset_db_path:         ./cdc_offsets.db
+  schema_db_path:         ./cdc_schemas.db
+  log_level:              INFO
+
+# ── Iceberg / Dremio Open Catalog ─────────────────────────────────────────────
+iceberg:
+  type:               rest
+  uri:                https://catalog.dremio.cloud/api/iceberg
+  token:              ${DREMIO_PAT}
+  warehouse:          my-project-name
+  target_namespace:   cdc
+  write_mode:         merge
+  sort_by:            _cdc_ts

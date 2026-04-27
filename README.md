@@ -58,6 +58,7 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 | **CockroachDB** | CHANGEFEED (native) | `kv.rangefeed.enabled = true` required |
 | **Google Cloud Spanner** | Change Streams | Auto-created on first connect |
 | **Google Cloud Pub/Sub** | Pull subscriptions (JSON messages) | Ack-on-commit; at-least-once delivery |
+| **Google Cloud Datastream** | GCS / Avro files (Path 2) | Serverless CDC from Oracle, MySQL, Postgres, AlloyDB; durable replay window |
 
 ---
 
@@ -411,6 +412,94 @@ See [`config.pubsub.example.yml`](config.pubsub.example.yml) for the full annota
 
 ---
 
+### Google Cloud Datastream (GCS path)
+
+<a name="datastream"></a>
+
+[Google Cloud Datastream](https://cloud.google.com/datastream) is a serverless CDC service that captures changes from Oracle, MySQL, Postgres, Cloud SQL, and AlloyDB and writes them as Avro or JSON files into a GCS bucket. The CDC daemon polls that bucket, reads new files, and writes changes to Iceberg via **Mode B (Open Catalog / PyIceberg)**.
+
+**Two delivery paths are supported:**
+
+| Path | Source type | Latency | Best for |
+|------|-------------|---------|----------|
+| **Path 1** | `pubsub` (existing connector) | Sub-second | Low volume, simple setup |
+| **Path 2** | `datastream` (this connector) | ~poll interval (default 10 s) | High volume, large backfills, durable replay |
+
+This section covers **Path 2**. For Path 1 (Datastream → Pub/Sub), use the `pubsub` source type with `op_field: metadata.operation` and see [`config.datastream-pubsub.example.yml`](config.datastream-pubsub.example.yml).
+
+#### Prerequisites
+
+1. A Datastream stream with a **Cloud Storage destination** configured.
+2. The GCS bucket and path prefix where Datastream writes files.
+3. A service account with `roles/storage.objectViewer` on the bucket (or use ADC).
+4. Datastream set to **Avro** or **JSON** format (`avro` recommended for schema precision).
+
+```bash
+# Grant read access to the GCS bucket
+gcloud storage buckets add-iam-policy-binding gs://my-datastream-bucket \
+  --member="serviceAccount:cdc-sa@my-project.iam.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+```
+
+#### File layout
+
+Datastream writes files at:
+```
+gs://{bucket}/{prefix}/{SCHEMA}/{TABLE}/YYYY/MM/DD/HH/{sequence}.avro
+```
+
+The connector discovers new files in lexicographic order and tracks per-record offsets (`file_path#record_index`) so it can resume exactly mid-file after a crash.
+
+**In the UI:** Sources → Add Source → Google Cloud Datastream. Enter the GCP project ID, bucket, and (optionally) path prefix and a service account key path. After testing the connection, enter table names as `SCHEMA.TABLE` (one per line).
+
+#### Metadata columns written to Iceberg
+
+| Column | Source |
+|--------|--------|
+| `_cdc_op` | `_metadata_operation` (INSERT / UPDATE / DELETE) |
+| `_cdc_ts` | `_metadata_timestamp` |
+| `_cdc_source` | `SCHEMA.TABLE` |
+| `_cdc_ingest_ts` | Ingestion time |
+
+#### Headless YAML config
+
+```yaml
+sources:
+  - name: datastream_prod
+    type: datastream
+
+    connection:
+      project_id:             my-gcp-project-id
+      bucket:                 my-datastream-bucket
+      path_prefix:            datastream/prod      # optional
+      # credentials_file:     /path/to/sa.json     # omit to use ADC
+      poll_interval_seconds:  10
+      file_format:            avro                 # avro | json
+
+    tables:
+      - HR.EMPLOYEES
+      - FINANCE.LEDGER
+
+options:
+  sink_mode:             iceberg      # Mode B required
+  snapshot_on_first_run: false        # Datastream handles backfill
+
+iceberg:
+  type:               rest
+  uri:                https://catalog.dremio.cloud/api/iceberg
+  token:              ${DREMIO_PAT}
+  warehouse:          my-project-name
+  target_namespace:   cdc
+  write_mode:         merge
+  sort_by:            _cdc_ts
+```
+
+See [`config.datastream-gcs.example.yml`](config.datastream-gcs.example.yml) for the full annotated reference, or [`config.datastream-pubsub.example.yml`](config.datastream-pubsub.example.yml) for Path 1 (Pub/Sub).
+
+</details>
+
+---
+
 ### Oracle
 
 <a name="oracle"></a>
@@ -687,7 +776,7 @@ docker run -d \
 
 ```bash
 # Starts Postgres, MySQL, MongoDB, DynamoDB (LocalStack), SQL Server, Oracle,
-# Debezium Server, Pub/Sub emulator, and a local Iceberg REST catalog
+# Debezium Server, Pub/Sub emulator, fake-GCS server, and a local Iceberg REST catalog
 docker compose up -d
 
 python main.py --ui
@@ -805,6 +894,13 @@ python3 -m pytest tests/test_e2e.py -m db2 -v
 
 # Run Pub/Sub unit + emulator tests (requires pubsub-emulator container)
 PUBSUB_EMULATOR_HOST=localhost:8085 python3 -m pytest tests/test_pubsub.py -v
+
+# Run Datastream unit tests (no emulator needed)
+python3 -m pytest tests/test_datastream.py -m "not datastream" -v
+
+# Run Datastream integration tests (requires fake-gcs container)
+docker compose up -d fake-gcs
+STORAGE_EMULATOR_HOST=http://localhost:4443 python3 -m pytest tests/test_datastream.py -m datastream -v
 ```
 
 ### Project structure
@@ -840,7 +936,8 @@ dremio-cdc/
 │   ├── snowflake_src.py        # Snowflake native STREAM objects
 │   ├── cockroachdb.py          # CockroachDB CHANGEFEED
 │   ├── spanner.py              # Google Cloud Spanner Change Streams
-│   └── pubsub.py               # Google Cloud Pub/Sub pull subscriptions
+│   ├── pubsub.py               # Google Cloud Pub/Sub pull subscriptions
+│   └── datastream.py           # Google Cloud Datastream → GCS / Avro (Path 2)
 │
 ├── ui/
 │   ├── backend/app.py          # Flask REST API + SPA server
@@ -855,6 +952,7 @@ dremio-cdc/
 └── tests/
     ├── test_e2e.py             # Integration test suite (135+ tests)
     ├── test_pubsub.py          # Pub/Sub unit + emulator integration tests (62 tests)
+    ├── test_datastream.py      # Datastream unit + fake-GCS integration tests (57 tests)
     └── fixtures/               # SQL seed files, Docker init scripts
 ```
 

@@ -46,3 +46,7 @@ google-cloud-spanner>=3.40
 
 # Google Cloud Pub/Sub
 google-cloud-pubsub>=2.21
+
+# Google Cloud Datastream (GCS path)
+google-cloud-storage>=2.16
+fastavro>=1.9

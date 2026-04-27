@@ -82,6 +82,7 @@ def _load_sources():
     from sources.cockroachdb import CockroachDBSource
     from sources.spanner     import SpannerSource
     from sources.pubsub      import PubSubSource
+    from sources.datastream  import DatastreamSource
 
     register_source("postgres",    PostgresSource)
     register_source("mysql",       MySQLSource)
@@ -96,6 +97,7 @@ def _load_sources():
     register_source("cockroachdb", CockroachDBSource)
     register_source("spanner",     SpannerSource)
     register_source("pubsub",      PubSubSource)
+    register_source("datastream",  DatastreamSource)
 
 
 class TableWorker(threading.Thread):

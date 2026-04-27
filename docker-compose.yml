@@ -226,6 +226,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # ── Fake GCS Server (for Datastream GCS connector tests) ────────────────────
+  # Emulates the GCS JSON API locally.
+  # Set STORAGE_EMULATOR_HOST=http://localhost:4443 before running tests.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    ports:
+      - "4443:4443"
+    command: -scheme http -port 4443 -public-host localhost
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4443/storage/v1/b || exit 1"]
+      interval: 3s
+      retries: 10
+      start_period: 5s
+
   # ── Google Cloud Pub/Sub Emulator ────────────────────────────────────────────
   # Set PUBSUB_EMULATOR_HOST=localhost:8085 before running tests.
   # The google-cloud-pubsub client honours this env var automatically.
