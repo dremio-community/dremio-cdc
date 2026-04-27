@@ -63,25 +63,19 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 ### Docker (recommended)
 
 ```bash
-# 1. Pull the image
+# 1. Pull and run
 docker pull mshainman/dremio-cdc:latest
-
-# 2. Copy and edit the example config
-curl -O https://raw.githubusercontent.com/dremio-community/dremio-cdc/main/config.example.yml
-cp config.example.yml config.yml
-# Edit config.yml with your source + Dremio connection details
-
-# 3. Run the daemon
 docker run -d \
   --name dremio-cdc \
   -p 7070:7070 \
-  -v $(pwd)/config.yml:/app/config.yml \
   -v $(pwd)/cdc_data:/app/data \
   mshainman/dremio-cdc:latest
 
-# 4. Open the web UI
+# 2. Open the web UI
 open http://localhost:7070
 ```
+
+The UI walks you through connecting a source, configuring the Dremio target, selecting tables, and starting the pipeline.
 
 ### From source
 
@@ -89,114 +83,33 @@ open http://localhost:7070
 git clone https://github.com/dremio-community/dremio-cdc.git
 cd dremio-cdc
 pip install -r requirements.txt
-
-cp config.example.yml config.yml
-# Edit config.yml
-
-python main.py --config config.yml
-```
-
-### Web UI mode
-
-```bash
-python main.py --ui --config config.yml
-# Opens http://localhost:7070 in your browser
+python main.py --ui
+# Opens http://localhost:7070
 ```
 
 ---
 
-## Configuration
+## Web UI
 
-Copy `config.example.yml` and edit. All values support environment variable expansion: `${MY_VAR}`.
+Open `http://localhost:7070` after starting the daemon. Everything is configurable from the UI — no config file required.
 
-### Minimal — Mode A (Dremio SQL)
-
-```yaml
-dremio:
-  host:             localhost
-  port:             9047
-  user:             admin
-  password:         ${DREMIO_PASSWORD}
-  target_namespace: cdc           # Dremio source or space where tables are created
-
-sources:
-  - name: my_postgres
-    type: postgres
-    connection:
-      host: db.example.com
-      database: production
-      user: cdc_user
-      password: ${PG_PASSWORD}
-    tables:
-      - public.orders
-      - public.customers
-```
-
-### Minimal — Mode B (Dremio Open Catalog)
-
-```yaml
-sources:
-  - name: my_postgres
-    type: postgres
-    connection:
-      host: db.example.com
-      database: production
-      user: cdc_user
-      password: ${PG_PASSWORD}
-    tables:
-      - public.orders
-
-options:
-  sink_mode: iceberg
-
-iceberg:
-  type:      rest
-  uri:       https://catalog.dremio.cloud/api/iceberg   # Dremio Cloud
-  token:     ${DREMIO_PAT}
-  warehouse: my-project-name     # Dremio Cloud project name (not UUID)
-  target_namespace: cdc
-  write_mode: merge              # "merge" (upsert) or "append" (event log)
-```
-
-### Dremio Cloud — Mode A with SQL API
-
-```yaml
-dremio:
-  host:       api.dremio.cloud
-  port:       443
-  ssl:        true
-  pat:        ${DREMIO_PAT}
-  project_id: 957704f5-4495-42ad-94de-671bf7790610   # From your Cloud project URL
-
-sources:
-  - name: my_postgres
-    type: postgres
-    ...
-```
-
-### Full options reference
-
-```yaml
-options:
-  sink_mode:                  dremio    # "dremio" | "iceberg"
-  batch_size:                 500       # Events per batch
-  batch_timeout_seconds:      10        # Max wait before flushing a partial batch
-  snapshot_on_first_run:      true      # Full table snapshot before streaming
-  incremental_snapshot:       false     # Chunk-based snapshot (safer for large tables)
-  snapshot_chunk_size:        5000
-  snapshot_cursor_column:     id
-  adaptive_batching:          true      # Auto-tune batch size based on throughput
-  min_batch_size:             100
-  max_batch_size:             5000
-  offset_db_path:             ./cdc_offsets.db   # SQLite; or postgres:// for multi-process
-  schema_drift_action:        alert     # "alert" | "auto_migrate" | "pause"
-  dlq_db_path:                ./cdc_dlq.db
-  dlq_max_retries:            3
-```
+| Page | What it does |
+|------|-------------|
+| **Status** | Live dashboard: lag gauge per worker, events/sec sparkline, error count, batch size |
+| **Sources** | Add and configure source connectors; test connections; browse tables and columns |
+| **Target** | Configure Dremio connection (Mode A) or Iceberg catalog (Mode B); test connectivity |
+| **Mappings** | Select tables, filter columns, configure per-column PII masking |
+| **Alerts** | Set lag and error thresholds; configure Slack, webhook, or email notifications |
+| **DLQ** | Browse failed events; retry individually or in bulk |
+| **Settings** | Batch size, snapshot mode, adaptive batching, schema drift, offset store path |
 
 ---
 
 ## Source setup
+
+Each source requires a one-time database-side configuration (granting permissions, enabling CDC features). Once the database is ready, add the source in the UI under **Sources → Add Source**.
+
+The SQL commands below are the database prerequisites — required regardless of whether you configure the daemon via the UI or a YAML file.
 
 ### PostgreSQL
 
@@ -211,6 +124,11 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO cdc_user;
 
 The daemon creates the publication and replication slot automatically on first connect.
 
+**In the UI:** Sources → Add Source → PostgreSQL. Enter host, port, database, user, and password. The replication slot and publication names default to `dremio_cdc` and are created automatically.
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: pg_prod
@@ -220,13 +138,15 @@ sources:
       port:              5432
       database:          production
       user:              cdc_user
-      password:          secret
+      password:          ${PG_PASSWORD}
       replication_slot:  dremio_cdc    # auto-created if absent
       publication:       dremio_cdc    # auto-created if absent
     tables:
       - public.orders
       - public.customers
 ```
+
+</details>
 
 ### MySQL
 
@@ -239,6 +159,11 @@ GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'cdc_user'@'%';
 GRANT SELECT ON production.* TO 'cdc_user'@'%';
 ```
 
+**In the UI:** Sources → Add Source → MySQL. Enter host, port, database, user, password, and server ID (any unique integer, e.g. `1`).
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: mysql_prod
@@ -248,11 +173,13 @@ sources:
       port:       3306
       database:   production
       user:       cdc_user
-      password:   secret
+      password:   ${MYSQL_PASSWORD}
       server_id:  1
     tables:
       - production.orders
 ```
+
+</details>
 
 ### MariaDB
 
@@ -267,6 +194,11 @@ GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'cdc_user'@'%';
 GRANT SELECT ON production.* TO 'cdc_user'@'%';
 ```
 
+**In the UI:** Sources → Add Source → MariaDB. Enter host, port, database, user, password, and server ID.
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: mariadb_prod
@@ -276,11 +208,13 @@ sources:
       port:       3306
       database:   production
       user:       cdc_user
-      password:   secret
+      password:   ${MARIADB_PASSWORD}
       server_id:  1
     tables:
       - production.orders
 ```
+
+</details>
 
 ### Snowflake
 
@@ -295,23 +229,30 @@ GRANT SELECT, REFERENCES ON TABLE <table> TO ROLE <role>;
 GRANT CREATE STREAM ON SCHEMA <schema> TO ROLE <role>;
 ```
 
+**In the UI:** Sources → Add Source → Snowflake. Enter account identifier, user, password, database, schema, warehouse, and role.
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: snowflake_prod
     type: snowflake
     connection:
-      account:    xy12345.us-east-1
-      user:       cdc_user
-      password:   secret
-      database:   PRODUCTION
-      schema:     PUBLIC
-      warehouse:  COMPUTE_WH
-      role:       CDC_ROLE        # optional
-      poll_interval: 30           # seconds between stream checks
+      account:       xy12345.us-east-1
+      user:          cdc_user
+      password:      ${SNOWFLAKE_PASSWORD}
+      database:      PRODUCTION
+      schema:        PUBLIC
+      warehouse:     COMPUTE_WH
+      role:          CDC_ROLE        # optional
+      poll_interval: 30              # seconds between stream checks
     tables:
       - PUBLIC.ORDERS
       - PUBLIC.CUSTOMERS
 ```
+
+</details>
 
 ### MongoDB
 
@@ -321,17 +262,24 @@ mongod --replSet rs0
 mongosh --eval "rs.initiate()"
 ```
 
+**In the UI:** Sources → Add Source → MongoDB. Enter the connection URI and database name.
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: mongo_prod
     type: mongodb
     connection:
-      uri:      mongodb://cdc_user:secret@mongo.example.com:27017/?directConnection=true
+      uri:      mongodb://cdc_user:${MONGO_PASSWORD}@mongo.example.com:27017/?directConnection=true
       database: production
     tables:
       - customers
       - orders
 ```
+
+</details>
 
 ### DynamoDB
 
@@ -342,18 +290,25 @@ aws dynamodb update-table \
   --stream-specification StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES
 ```
 
+**In the UI:** Sources → Add Source → DynamoDB. Enter region and AWS credentials (or leave credentials blank to use the instance role / environment).
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: dynamo_prod
     type: dynamodb
     connection:
-      region:              us-east-1
-      aws_access_key_id:   ${AWS_ACCESS_KEY_ID}
+      region:                us-east-1
+      aws_access_key_id:     ${AWS_ACCESS_KEY_ID}
       aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
     tables:
       - Orders
       - Customers
 ```
+
+</details>
 
 ### Oracle
 
@@ -361,10 +316,10 @@ sources:
 
 Oracle CDC uses **Debezium Server** as an adapter. Debezium connects to Oracle's LogMiner and POSTs change events to the CDC daemon's HTTP endpoint.
 
-**1. Enable Oracle prerequisites:**
+**1. Enable Oracle prerequisites (run once as DBA):**
 
 ```sql
--- Enable ARCHIVELOG mode (requires DBA)
+-- Enable ARCHIVELOG mode
 SHUTDOWN IMMEDIATE;
 STARTUP MOUNT;
 ALTER DATABASE ARCHIVELOG;
@@ -386,7 +341,6 @@ GRANT SELECT ON V_$DATABASE TO c##dbzuser CONTAINER=ALL;
 **2. Run Debezium Server:**
 
 ```bash
-# Copy and edit the pre-built config
 cp debezium/oracle.properties debezium/application.properties
 # Edit: database.hostname, database.user, database.password, database.dbname
 
@@ -396,20 +350,25 @@ docker run -d --name debezium-oracle \
   debezium/server:2.7.3.Final
 ```
 
-**3. Configure the CDC daemon:**
+**3. In the UI:** Sources → Add Source → Oracle (Debezium). Enter the listen port that Debezium is posting to (default `8765`) and the tables to watch.
+
+<details>
+<summary>Headless YAML</summary>
 
 ```yaml
 sources:
   - name: oracle_prod
     type: oracle
-    listen_port: 8765          # Debezium posts events here
+    listen_port: 8765
     tables:
       - HR.EMPLOYEES
       - HR.DEPARTMENTS
 ```
 
-Pre-built configs are included for Oracle, SQL Server, and DB2:
-- `debezium/oracle.properties` — production template
+</details>
+
+Pre-built Debezium configs are included:
+- `debezium/oracle.properties` — Oracle production template
 - `debezium/sqlserver.properties`
 - `debezium/db2.properties`
 
@@ -422,36 +381,37 @@ EXEC sys.sp_cdc_enable_table @source_schema='dbo', @source_name='Orders',
      @role_name=NULL, @supports_net_changes=1;
 ```
 
+**In the UI:** Sources → Add Source → SQL Server. Enter host, port, database, user, and password.
+
+<details>
+<summary>Headless YAML</summary>
+
 ```yaml
 sources:
   - name: sqlserver_prod
-    type: debezium
-    listen_port: 8766
+    type: sqlserver
+    connection:
+      host:     db.example.com
+      port:     1433
+      database: production
+      user:     cdc_user
+      password: ${MSSQL_PASSWORD}
     tables:
       - dbo.Orders
 ```
 
----
-
-## Web UI
-
-Start with `python main.py --ui --config config.yml` or `docker run -p 7070:7070 ...`
-
-| Page | What it does |
-|------|-------------|
-| **Status** | Live dashboard: lag gauge per worker, events/sec sparkline, error count, batch size |
-| **Sources** | Add and configure source connectors; test connections; browse tables and columns |
-| **Target** | Configure Dremio connection (Mode A) or Iceberg catalog (Mode B); test connectivity |
-| **Mappings** | Select tables, filter columns, configure per-column PII masking |
-| **Alerts** | Set lag and error thresholds; configure Slack, webhook, or email notifications |
-| **DLQ** | Browse failed events; retry individually or in bulk |
-| **Settings** | Batch size, snapshot mode, adaptive batching, offset store path |
+</details>
 
 ---
 
 ## PII masking
 
-Apply column-level masking before events reach Dremio:
+Configure column-level masking in the UI under **Mappings** — select a table, click a column, and choose the masking function. Masking is applied before any event reaches Dremio.
+
+Available functions: `redact` (→ `[REDACTED]`), `hash_sha256`, `hash_md5`, `mask` (→ `***`), `nullify` (→ `NULL`), `tokenize` (→ `tok_<hex16>`)
+
+<details>
+<summary>Headless YAML</summary>
 
 ```yaml
 sources:
@@ -459,18 +419,23 @@ sources:
     type: postgres
     masking:
       public.users:
-        email:  hash_sha256    # deterministic pseudonymisation
-        ssn:    redact         # replace with [REDACTED]
-        name:   mask           # replace with ***
-        phone:  nullify        # replace with NULL
-        card:   tokenize       # replace with tok_<hex16>
+        email:  hash_sha256
+        ssn:    redact
+        name:   mask
+        phone:  nullify
+        card:   tokenize
 ```
 
-Available functions: `redact`, `hash_sha256`, `hash_md5`, `mask`, `nullify`, `tokenize`
+</details>
 
 ---
 
 ## Alerting
+
+Configure alert thresholds and notification channels in the UI under **Alerts**. Supported channels: Slack, email (SMTP), and generic webhook.
+
+<details>
+<summary>Headless YAML</summary>
 
 ```yaml
 alerts:
@@ -480,7 +445,7 @@ alerts:
   cooldown_seconds:       300
   channels:
     - type: slack
-      webhook_url: https://hooks.slack.com/services/...
+      webhook_url: ${SLACK_WEBHOOK_URL}
     - type: email
       smtp_host:     smtp.gmail.com
       smtp_port:     587
@@ -494,11 +459,117 @@ alerts:
       method: POST
 ```
 
+</details>
+
+---
+
+## Advanced features
+
+### Adaptive batching
+
+Automatically tunes batch size based on throughput and lag — smaller batches for low latency, larger for high throughput.
+
+**In the UI:** Settings → Batching → enable Adaptive Batching; set min/max batch size.
+
+### Schema drift detection
+
+Detects when source tables add, remove, or change column types. `auto_migrate` issues `ALTER TABLE ADD COLUMN` on the Dremio target automatically.
+
+**In the UI:** Settings → Schema drift action (`Alert` / `Auto-migrate` / `Pause`).
+
+### Incremental snapshot
+
+Reads large tables in PK-ordered chunks instead of a single full scan.
+
+**In the UI:** Settings → Snapshot mode → Incremental; set chunk size and cursor column.
+
+### Dead letter queue
+
+Failed events park to SQLite and are retried automatically. Browse and replay from the **DLQ** page in the UI.
+
+### PostgreSQL offset store (multi-instance)
+
+By default offsets are stored in a local SQLite file. For multi-instance or Kubernetes deployments, switch to a shared PostgreSQL store.
+
+**In the UI:** Settings → Offset store → enter a `postgresql://` connection string.
+
+```sql
+-- Run once
+CREATE USER cdc_user WITH PASSWORD 'cdc_pass';
+CREATE DATABASE cdc_offsets;
+GRANT ALL PRIVILEGES ON DATABASE cdc_offsets TO cdc_user;
+```
+
+The `cdc_offsets` table is created automatically on first run.
+
+> **Note:** The Dead Letter Queue always uses a local SQLite file — DLQ entries are per-process by design.
+
+### Secrets management
+
+#### Environment variables
+
+Use `${VAR}` anywhere in the config or UI credential fields. Set secrets at runtime:
+
+```bash
+docker run ... \
+  -e DREMIO_PAT=eyJ... \
+  -e PG_PASSWORD=secret \
+  -e AWS_ACCESS_KEY_ID=AKIA... \
+  mshainman/dremio-cdc:latest
+```
+
+#### HashiCorp Vault (KV v2)
+
+Use `vault:path#field` references in any credential field. Configure the Vault connection under Settings → Secrets.
+
+<details>
+<summary>Headless YAML</summary>
+
+```yaml
+secrets:
+  vault:
+    url:         https://vault.example.com
+    auth_method: token                   # token (default) or approle
+    token:       ${VAULT_TOKEN}
+    mount:       secret
+    namespace:   ""                      # Vault Enterprise only
+
+sources:
+  - name: prod_pg
+    type: postgres
+    connection:
+      password: vault:secret/prod/postgres#password
+```
+
+</details>
+
+Install the Vault client: `pip install hvac`
+
+### Prometheus metrics
+
+```
+GET http://localhost:7070/metrics
+```
+
+Each worker emits: `cdc_lag_seconds`, `cdc_events_total`, `cdc_errors_total`, `cdc_flush_duration_seconds`, `cdc_batch_size`.
+
 ---
 
 ## Docker deployment
 
-### Single container
+### Without a config file (UI-configured)
+
+```bash
+docker run -d \
+  --name dremio-cdc \
+  -p 7070:7070 \
+  -v $(pwd)/cdc_data:/app/data \
+  mshainman/dremio-cdc:latest
+```
+
+Open `http://localhost:7070` and configure everything in the UI. The UI saves config to the mounted data volume.
+
+### With a config file (headless)
 
 ```bash
 docker run -d \
@@ -511,191 +582,106 @@ docker run -d \
   mshainman/dremio-cdc:latest
 ```
 
-### Docker Compose (with source databases for dev/test)
+### Docker Compose (dev/test environment)
 
 ```bash
 # Starts Postgres, MySQL, MongoDB, DynamoDB (LocalStack), SQL Server, Oracle,
 # Debezium Server, and a local Iceberg REST catalog
 docker compose up -d
 
-# Then run the CDC daemon against the test environment
-python main.py --config config.test.yml
-```
-
-### Environment variables
-
-All config values support `${VAR}` substitution. Pass secrets via environment:
-
-```bash
-docker run ... \
-  -e DREMIO_PAT=eyJ... \
-  -e PG_PASSWORD=secret \
-  -e AWS_ACCESS_KEY_ID=AKIA... \
-  mshainman/dremio-cdc:latest
+python main.py --ui
 ```
 
 ---
 
-## Advanced features
+## Headless YAML reference
 
-### Adaptive batching
+> The sections below document the full YAML format for deployments that run without the UI (CI pipelines, Kubernetes, infrastructure-as-code). All values support `${ENV_VAR}` expansion.
 
-Automatically tunes batch size based on observed throughput and lag. When lag is low, uses smaller batches for lower latency; under load, grows batch size to maximize throughput.
-
-```yaml
-options:
-  adaptive_batching: true
-  min_batch_size:    100
-  max_batch_size:    5000
-```
-
-### Schema drift detection
-
-Automatically detects when source tables add, remove, or change column types:
+### Minimal — Mode A (Dremio SQL)
 
 ```yaml
-options:
-  schema_drift_action: alert         # "alert" | "auto_migrate" | "pause"
-  schema_drift_check_every_n_batches: 10
+dremio:
+  host:             localhost
+  port:             9047
+  user:             admin
+  password:         ${DREMIO_PASSWORD}
+  target_namespace: cdc
+
+sources:
+  - name: my_postgres
+    type: postgres
+    connection:
+      host:     db.example.com
+      database: production
+      user:     cdc_user
+      password: ${PG_PASSWORD}
+    tables:
+      - public.orders
+      - public.customers
 ```
 
-`auto_migrate` issues `ALTER TABLE ADD COLUMN` on the Dremio target automatically.
-
-### Incremental snapshot
-
-Safer than a full-table snapshot for large tables — reads in PK-ordered chunks:
-
-```yaml
-options:
-  incremental_snapshot:    true
-  snapshot_chunk_size:     5000
-  snapshot_cursor_column:  id
-```
-
-### Dead letter queue
-
-Failed events are parked to SQLite instead of dropped; a background worker retries automatically:
-
-```yaml
-options:
-  dlq_db_path:     ./cdc_dlq.db
-  dlq_max_retries: 3
-```
-
-Browse and replay from the `/dlq` page in the web UI.
-
-### Scaling with PostgreSQL offset store
-
-By default Dremio CDC stores replication offsets in a local SQLite file (`cdc_offsets.db`). This works well for a single daemon process. For production deployments — especially when running multiple daemon instances across different hosts or source types — switch to a shared PostgreSQL offset store.
-
-**When to use PostgreSQL:**
-- Running multiple CDC daemon instances (e.g. one per source type, or active/standby HA)
-- Deploying in containers / Kubernetes where local disk state is ephemeral
-- You want offset visibility and auditability outside the daemon process
-
-**Setup:**
-
-```sql
--- Run once on your PostgreSQL server
-CREATE USER cdc_user WITH PASSWORD 'cdc_pass';
-CREATE DATABASE cdc_offsets;
-GRANT ALL PRIVILEGES ON DATABASE cdc_offsets TO cdc_user;
-```
-
-The table (`cdc_offsets`) is created automatically on first run — no schema migration needed.
-
-**Config:**
-
-```yaml
-options:
-  offset_db_path: postgresql://cdc_user:cdc_pass@postgres.example.com:5432/cdc_offsets
-```
-
-You can also set this from the **Settings** page in the web UI without editing YAML.
-
-**How it works:**
-
-Each `(source_name, table)` pair has its own offset row. All reads and writes use upsert semantics — safe for concurrent access from multiple daemon processes. If two instances try to process the same table, the last writer wins (offsets are monotonically advancing, so this is safe for LSN/binlog-position style offsets).
-
-> **Note:** The Dead Letter Queue (`cdc_dlq.db`) always uses SQLite and is local to each daemon instance. DLQ entries are per-process by design.
-
-### Secrets management
-
-Dremio CDC supports two secrets backends so credentials never need to live in plaintext YAML.
-
-#### Environment variables
-
-Use `${ENV_VAR}` anywhere in the config — including inline within a string:
+### Minimal — Mode B (Dremio Open Catalog)
 
 ```yaml
 sources:
-  - name: prod_pg
+  - name: my_postgres
     type: postgres
     connection:
-      host: ${DB_HOST}
-      password: ${DB_PASSWORD}
+      host:     db.example.com
+      database: production
+      user:     cdc_user
+      password: ${PG_PASSWORD}
+    tables:
+      - public.orders
 
-dremio:
-  pat: ${DREMIO_PAT}
+options:
+  sink_mode: iceberg
 
-alerts:
-  channels:
-    - type: slack
-      webhook_url: ${SLACK_WEBHOOK_URL}
-    - type: email
-      smtp_password: ${SMTP_PASSWORD}
+iceberg:
+  type:             rest
+  uri:              https://catalog.dremio.cloud/api/iceberg
+  token:            ${DREMIO_PAT}
+  warehouse:        my-project-name
+  target_namespace: cdc
+  write_mode:       merge    # "merge" (upsert) or "append" (event log)
 ```
 
-Inline substitution also works: `jdbc://${DB_HOST}:${DB_PORT}/mydb`
-
-If an env var is not set, the literal `${VAR}` is left in place (no silent failure).
-
-#### HashiCorp Vault (KV v2)
-
-Use `vault:path#field` references anywhere in the config:
+### Dremio Cloud — Mode A with SQL API
 
 ```yaml
+dremio:
+  host:       api.dremio.cloud
+  port:       443
+  ssl:        true
+  pat:        ${DREMIO_PAT}
+  project_id: 957704f5-4495-42ad-94de-671bf7790610
+
 sources:
-  - name: prod_pg
+  - name: my_postgres
     type: postgres
-    connection:
-      password: vault:secret/prod/postgres#password
-
-dremio:
-  pat: vault:secret/prod/dremio#pat
+    ...
 ```
 
-Configure the Vault connection under a top-level `secrets:` block:
+### Full options reference
 
 ```yaml
-secrets:
-  vault:
-    url: https://vault.example.com       # or set VAULT_ADDR env var
-    auth_method: token                   # token (default) or approle
-    token: ${VAULT_TOKEN}                # for token auth
-
-    # AppRole auth (recommended for production):
-    # auth_method: approle
-    # role_id: ${VAULT_ROLE_ID}
-    # secret_id: ${VAULT_SECRET_ID}
-
-    mount: secret                        # KV v2 mount point (default: secret)
-    namespace: ""                        # Vault Enterprise namespace (optional)
+options:
+  sink_mode:                  dremio    # "dremio" | "iceberg"
+  batch_size:                 500
+  batch_timeout_seconds:      10
+  snapshot_on_first_run:      true
+  incremental_snapshot:       false
+  snapshot_chunk_size:        5000
+  snapshot_cursor_column:     id
+  adaptive_batching:          true
+  min_batch_size:             100
+  max_batch_size:             5000
+  offset_db_path:             ./cdc_offsets.db   # SQLite; or postgres:// for multi-process
+  schema_drift_action:        alert              # "alert" | "auto_migrate" | "pause"
+  dlq_db_path:                ./cdc_dlq.db
+  dlq_max_retries:            3
 ```
-
-Install the Vault client library: `pip install hvac`
-
-Vault secrets are cached per-path within a single daemon run to minimise Vault API calls.
-
-### Prometheus metrics
-
-Expose metrics for Prometheus scraping:
-
-```
-GET http://localhost:7070/metrics
-```
-
-Each worker emits: `cdc_lag_seconds`, `cdc_events_total`, `cdc_errors_total`, `cdc_flush_duration_seconds`, `cdc_batch_size`.
 
 ---
 
@@ -704,17 +690,17 @@ Each worker emits: `cdc_lag_seconds`, `cdc_events_total`, `cdc_errors_total`, `c
 ### Local test environment
 
 ```bash
-# Start all test databases (Postgres, MySQL, MongoDB, DynamoDB, SQL Server, Oracle)
+# Start all test databases
 docker compose up -d
 
 # Run tests (unit + integration; excludes cloud and oracle live tests)
 python3 -m pytest tests/test_e2e.py -m "not cloud and not ui and not oracle" -v
 
-# Run Oracle live tests (requires docker compose up -d oracle debezium-oracle)
+# Run Oracle live tests
 python3 -m pytest tests/test_e2e.py -m oracle -v
 
-# Run against Dremio Cloud
-python3 -m pytest tests/test_e2e.py -m cloud -v
+# Run DB2 live tests
+python3 -m pytest tests/test_e2e.py -m db2 -v
 ```
 
 ### Project structure
