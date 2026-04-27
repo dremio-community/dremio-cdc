@@ -238,7 +238,26 @@ class TableWorker(threading.Thread):
 
     def _run_incremental_snapshot(self, table: str, source_name: str, resume_offset: Optional[str]):
         """Cursor-based chunked snapshot. Saves progress after every chunk so restarts resume mid-table."""
-        cursor_col = self._snap_cursor_col or self.source.get_pk_column(table)
+        pk_col = self.source.get_pk_column(table)
+        if self._snap_cursor_col:
+            # Verify the configured cursor column exists in this table's schema.
+            # Use the schema's actual column name (preserves database casing, e.g. Oracle
+            # stores column names in UPPER CASE — querying with "id" when the column is "ID"
+            # would cause ORA-00904 / column-not-found errors).
+            try:
+                schema = self.source.get_schema(table)
+                col_name_map = {c.name.lower(): c.name for c in schema}
+                canonical = col_name_map.get(self._snap_cursor_col.lower())
+                if canonical:
+                    cursor_col = canonical
+                else:
+                    logger.warning("[%s/%s] Configured cursor column '%s' not found — using '%s'",
+                                   source_name, table, self._snap_cursor_col, pk_col)
+                    cursor_col = pk_col
+            except Exception:
+                cursor_col = pk_col
+        else:
+            cursor_col = pk_col
         if not cursor_col:
             logger.warning("[%s/%s] No cursor column found — falling back to full snapshot", source_name, table)
             for ev in self.source.snapshot(table):
@@ -247,12 +266,24 @@ class TableWorker(threading.Thread):
             return
 
         # Parse resume point from saved offset "snap:{col}:{val}"
+        # Validate the saved cursor column still exists in the schema before trusting it.
         last_val: Optional[str] = None
         if resume_offset:
             parts = resume_offset.split(":", 2)
             if len(parts) == 3:
-                cursor_col = parts[1]
-                last_val   = parts[2]
+                saved_col = parts[1]
+                try:
+                    schema = self.source.get_schema(table)
+                    col_name_map = {c.name.lower(): c.name for c in schema}
+                    canonical = col_name_map.get(saved_col.lower())
+                    if canonical:
+                        cursor_col = canonical
+                    else:
+                        logger.warning("[%s/%s] Saved cursor column '%s' not found in schema — using '%s'",
+                                       source_name, table, saved_col, cursor_col)
+                except Exception:
+                    pass
+                last_val = parts[2]
 
         logger.info("[%s/%s] Incremental snapshot (cursor=%s, start_after=%s, chunk=%d)",
                     source_name, table, cursor_col, last_val, self._snap_chunk_size)

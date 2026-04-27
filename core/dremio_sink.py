@@ -77,6 +77,7 @@ class DremioSink:
         self._project_id = cfg.get("project_id", "")
         self._namespace  = cfg.get("target_namespace", "cdc")
         self._token: Optional[str] = None
+        self._bearer: bool = False
         self._known_schemas: Dict[str, List[str]] = {}
 
         scheme = "https" if self._ssl else "http"

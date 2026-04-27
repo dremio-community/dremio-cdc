@@ -224,13 +224,23 @@ class MySQLSource(CDCSource):
                 return dict(zip(col_names, vals))
             return values
 
+        import time as _time
         _stream_iter = iter(self._stream)
+        _conn_errors = 0
         while True:
             try:
                 event = next(_stream_iter)
+                _conn_errors = 0  # reset backoff on success
             except StopIteration:
                 break
             except Exception as _e:
+                _msg = str(_e)
+                if "OperationalError" in type(_e).__name__ or "OperationalError" in _msg:
+                    _conn_errors += 1
+                    _delay = min(30, 2 ** min(_conn_errors, 4))
+                    logger.warning("[%s] MySQL connection lost, retry in %ds: %s", self.name, _delay, _e)
+                    _time.sleep(_delay)
+                    continue
                 logger.debug("[%s] Skipping unreadable binlog event: %s", self.name, _e)
                 continue
             try:
