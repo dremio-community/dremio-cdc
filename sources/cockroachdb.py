@@ -1,11 +1,11 @@
 """
-CockroachDB source — uses EXPERIMENTAL CHANGEFEED to stream DML changes.
+CockroachDB source — uses CHANGEFEED to stream DML changes.
 
 CockroachDB is wire-compatible with PostgreSQL (psycopg2 works for schema
-introspection and snapshots), but EXPERIMENTAL CHANGEFEED returns an infinite
-streaming result set that blocks psycopg2's execute().  The changefeed thread
-therefore uses asyncpg (non-blocking async driver) via asyncio.run_until_complete
-in a dedicated thread.
+introspection and snapshots), but CHANGEFEED returns an infinite streaming
+result set that blocks psycopg2's execute().  The changefeed thread therefore
+uses asyncpg (non-blocking async driver) via asyncio.run_until_complete in a
+dedicated thread.
 
 Each changefeed row is a (table, key_bytes, value_bytes) tuple where value_bytes
 is a JSON-encoded object: {"after": {...}, "updated": "<timestamp>"} for inserts/
@@ -126,7 +126,7 @@ class CockroachDBSource(CDCSource):
                 continue
 
     def _run_changefeed(self, tables: List[str], cursor: Optional[str]):
-        """Background thread: runs EXPERIMENTAL CHANGEFEED via asyncpg (non-blocking)."""
+        """Background thread: runs CHANGEFEED via asyncpg (non-blocking)."""
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(self._async_changefeed(tables, cursor))
@@ -152,7 +152,7 @@ class CockroachDBSource(CDCSource):
         )
         cursor_clause = f", cursor='{cursor}'" if cursor else ""
         sql = (
-            f"EXPERIMENTAL CHANGEFEED FOR {table_list} "
+            f"CHANGEFEED FOR {table_list} "
             f"WITH updated, resolved='5s'{cursor_clause}"
         )
         logger.info("Starting CockroachDB changefeed: %s", sql)

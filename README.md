@@ -55,6 +55,7 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 | **SQL Server** | Native CDC (LSN-based) | `sp_cdc_enable_db` + `sp_cdc_enable_table` required |
 | **SQL Server** | Debezium Server → HTTP adapter | Alternative; SQL Server Agent + CDC enabled |
 | **DB2** | Debezium Server → HTTP adapter | ASN Capture required |
+| **CockroachDB** | CHANGEFEED (native) | `kv.rangefeed.enabled = true` required |
 
 ---
 
@@ -734,7 +735,7 @@ dremio-cdc/
 │   ├── debezium.py             # HTTP adapter for Debezium Server (Oracle, SQL Server, DB2)
 │   ├── sqlserver.py            # SQL Server CDC via pyodbc
 │   ├── snowflake_src.py        # Snowflake native STREAM objects
-│   └── cockroachdb.py          # CockroachDB CHANGEFEED (experimental)
+│   └── cockroachdb.py          # CockroachDB CHANGEFEED
 │
 ├── ui/
 │   ├── backend/app.py          # Flask REST API + SPA server
