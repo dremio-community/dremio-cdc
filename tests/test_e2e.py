@@ -4737,3 +4737,269 @@ class TestSpannerLive:
         events = _spanner_wait_for_events(self.src, "Employees", 1, timeout=30)
         assert events, "No streaming event received"
         assert events[0].offset is not None, "offset should not be None"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Spanner → Local Dremio (Mode A DremioSink)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SPANNER_E2E_SCHEMA = [
+    ColumnSchema("Id",     "INT64",   nullable=False, primary_key=True),
+    ColumnSchema("Name",   "STRING",  nullable=True,  primary_key=False),
+    ColumnSchema("Email",  "STRING",  nullable=True,  primary_key=False),
+    ColumnSchema("Salary", "FLOAT64", nullable=True,  primary_key=False),
+]
+
+_ICEBERG_LOCAL_SPANNER = dict(ICEBERG_LOCAL, target_namespace="spanner_local_e2e_ns")
+
+
+def _spanner_emit_events(src, table: str, rows: list, op: Operation) -> list:
+    """Wrap raw Spanner rows as ChangeEvents with the e2e schema."""
+    events = []
+    for row in rows:
+        events.append(ChangeEvent(
+            op=op,
+            source_name="spanner_test",
+            source_table=table,
+            before=None,
+            after=row if op != Operation.DELETE else None,
+            schema=_SPANNER_E2E_SCHEMA,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        ))
+    return events
+
+
+@pytest.mark.integration
+@pytest.mark.spanner
+class TestSpannerToLocalIceberg(unittest.TestCase):
+    """Stream Spanner snapshot events → IcebergSink → local Iceberg REST (MinIO).
+
+    Verifies INSERT, UPDATE and DELETE are correctly applied to the Iceberg table
+    by scanning it directly via PyIceberg (no Dremio SQL needed).
+    """
+
+    _table = "spanner_local_e2e"
+
+    @classmethod
+    def setUpClass(cls):
+        pytest.importorskip("google.cloud.spanner")
+        pytest.importorskip("pyiceberg")
+
+        os.environ.setdefault("SPANNER_EMULATOR_HOST", "localhost:9010")
+
+        from google.auth.credentials import AnonymousCredentials
+        from google.cloud import spanner as gcs
+        anon = AnonymousCredentials()
+        cls._db = gcs.Client(project="test-project", credentials=anon) \
+                     .instance("test-instance").database("testdb")
+
+        from sources.spanner import SpannerSource
+        cls.src = SpannerSource("spanner_test", SPANNER_CFG)
+        cls.src.connect()
+
+        from core.iceberg_sink import IcebergSink
+        cls.sink = IcebergSink(_ICEBERG_LOCAL_SPANNER, DREMIO_LOCAL)
+        cls.sink.connect()
+
+        # Drop table from previous runs
+        tbl_id = cls.sink._table_identifier(cls._table)
+        try:
+            cls.sink._catalog.drop_table(tbl_id)
+        except Exception:
+            pass
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.src.close()
+
+    def _scan(self) -> list:
+        tbl_id = self.__class__.sink._table_identifier(self.__class__._table)
+        tbl = self.__class__.sink._catalog.load_table(tbl_id)
+        return tbl.scan().to_arrow().to_pylist()
+
+    def test_snapshot_lands_in_local_iceberg(self):
+        rows = [
+            {"Id": 201, "Name": "LocalA", "Email": "la@test.com", "Salary": 50000.0},
+            {"Id": 202, "Name": "LocalB", "Email": "lb@test.com", "Salary": 60000.0},
+        ]
+        with self.__class__._db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(r["Id"], r["Name"], r["Email"], r["Salary"]) for r in rows],
+            )
+
+        events = _spanner_emit_events(self.__class__.src, "Employees", rows, Operation.SNAPSHOT)
+        for e in events:
+            e.source_table = self.__class__._table
+        self.__class__.sink.write_batch(events)
+
+        result = self._scan()
+        ids = {r.get("Id") for r in result}
+        assert 201 in ids and 202 in ids, f"Expected rows 201/202 in Iceberg, got: {ids}"
+
+    def test_update_reflected_in_local_iceberg(self):
+        row = {"Id": 203, "Name": "LocalC", "Email": "lc@test.com", "Salary": 70000.0}
+        insert_ev = _spanner_emit_events(self.__class__.src, "Employees", [row], Operation.SNAPSHOT)
+        insert_ev[0].source_table = self.__class__._table
+        self.__class__.sink.write_batch(insert_ev)
+
+        updated = {**row, "Salary": 75000.0}
+        update_ev = [ChangeEvent(
+            op=Operation.UPDATE,
+            source_name="spanner_test",
+            source_table=self.__class__._table,
+            before=row,
+            after=updated,
+            schema=_SPANNER_E2E_SCHEMA,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        )]
+        self.__class__.sink.write_batch(update_ev)
+
+        result = self._scan()
+        target = next((r for r in result if r.get("Id") == 203), None)
+        assert target is not None, "Row 203 not found"
+        assert target.get("Salary") == 75000.0, f"Expected 75000, got {target.get('Salary')}"
+
+    def test_delete_reflected_in_local_iceberg(self):
+        row = {"Id": 204, "Name": "LocalD", "Email": "ld@test.com", "Salary": 80000.0}
+        insert_ev = _spanner_emit_events(self.__class__.src, "Employees", [row], Operation.SNAPSHOT)
+        insert_ev[0].source_table = self.__class__._table
+        self.__class__.sink.write_batch(insert_ev)
+
+        del_ev = [ChangeEvent(
+            op=Operation.DELETE,
+            source_name="spanner_test",
+            source_table=self.__class__._table,
+            before=row,
+            after=None,
+            schema=_SPANNER_E2E_SCHEMA,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        )]
+        self.__class__.sink.write_batch(del_ev)
+
+        result = self._scan()
+        ids = {r.get("Id") for r in result}
+        assert 204 not in ids, f"Row 204 should have been deleted, still found in: {ids}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Spanner → Dremio Cloud (Mode A DremioSink)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_DREMIO_CLOUD_SPANNER_SINK_CFG = {
+    "host": "api.dremio.cloud", "port": 443, "ssl": True,
+    "pat": DREMIO_CLOUD_PAT, "project_id": DREMIO_CLOUD_PROJECT,
+    "target_namespace": "cdc_demo",
+}
+
+
+@pytest.mark.cloud
+@pytest.mark.spanner
+class TestSpannerToCloudDremio(unittest.TestCase):
+    """Stream Spanner snapshot events → DremioSink → Dremio Cloud."""
+
+    _table = "spanner_cloud_e2e"
+
+    @classmethod
+    def setUpClass(cls):
+        pytest.importorskip("google.cloud.spanner")
+
+        os.environ.setdefault("SPANNER_EMULATOR_HOST", "localhost:9010")
+
+        from google.auth.credentials import AnonymousCredentials
+        from google.cloud import spanner as gcs
+        anon = AnonymousCredentials()
+        cls._db = gcs.Client(project="test-project", credentials=anon) \
+                     .instance("test-instance").database("testdb")
+
+        from sources.spanner import SpannerSource
+        cls.src = SpannerSource("spanner_test", SPANNER_CFG)
+        cls.src.connect()
+
+        from core.dremio_sink import DremioSink
+        cls.sink = DremioSink(_DREMIO_CLOUD_SPANNER_SINK_CFG)
+        cls.sink.connect()
+
+        try:
+            _sink_sql(f'DROP TABLE IF EXISTS "cdc_demo"."{cls._table}"')
+        except Exception:
+            pass
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.src.close()
+
+    def _rows(self) -> list:
+        return _sink_query(f'SELECT * FROM "cdc_demo"."{self.__class__._table}" ORDER BY "Id"')
+
+    def test_snapshot_land_in_cloud_dremio(self):
+        rows = [
+            {"Id": 301, "Name": "CloudA", "Email": "ca@test.com", "Salary": 55000.0},
+            {"Id": 302, "Name": "CloudB", "Email": "cb@test.com", "Salary": 65000.0},
+        ]
+        with self.__class__._db.batch() as batch:
+            batch.insert_or_update(
+                table="Employees",
+                columns=["Id", "Name", "Email", "Salary"],
+                values=[(r["Id"], r["Name"], r["Email"], r["Salary"]) for r in rows],
+            )
+
+        events = _spanner_emit_events(self.__class__.src, "Employees", rows, Operation.SNAPSHOT)
+        for e in events:
+            e.source_table = self.__class__._table
+        self.__class__.sink.write_batch(events)
+
+        result = self._rows()
+        ids = {int(r.get("Id") or r.get("id") or 0) for r in result}
+        assert 301 in ids and 302 in ids, f"Expected rows 301/302 in Cloud Dremio, got: {ids}"
+
+    def test_update_reflected_in_cloud_dremio(self):
+        row = {"Id": 303, "Name": "CloudC", "Email": "cc@test.com", "Salary": 72000.0}
+        insert_ev = _spanner_emit_events(self.__class__.src, "Employees", [row], Operation.SNAPSHOT)
+        insert_ev[0].source_table = self.__class__._table
+        self.__class__.sink.write_batch(insert_ev)
+
+        updated = {**row, "Salary": 78000.0}
+        update_ev = [ChangeEvent(
+            op=Operation.UPDATE,
+            source_name="spanner_test",
+            source_table=self.__class__._table,
+            before=row,
+            after=updated,
+            schema=_SPANNER_E2E_SCHEMA,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        )]
+        self.__class__.sink.write_batch(update_ev)
+
+        result = self._rows()
+        target = next((r for r in result if int(r.get("Id") or r.get("id") or 0) == 303), None)
+        assert target is not None, "Row 303 not found"
+        salary = float(target.get("Salary") or target.get("salary") or 0)
+        assert salary == 78000.0, f"Expected Salary 78000, got {salary}"
+
+    def test_delete_reflected_in_cloud_dremio(self):
+        row = {"Id": 304, "Name": "CloudD", "Email": "cd@test.com", "Salary": 88000.0}
+        insert_ev = _spanner_emit_events(self.__class__.src, "Employees", [row], Operation.SNAPSHOT)
+        insert_ev[0].source_table = self.__class__._table
+        self.__class__.sink.write_batch(insert_ev)
+
+        del_ev = [ChangeEvent(
+            op=Operation.DELETE,
+            source_name="spanner_test",
+            source_table=self.__class__._table,
+            before=row,
+            after=None,
+            schema=_SPANNER_E2E_SCHEMA,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            offset=None,
+        )]
+        self.__class__.sink.write_batch(del_ev)
+
+        result = self._rows()
+        ids = {int(r.get("Id") or r.get("id") or 0) for r in result}
+        assert 304 not in ids, f"Row 304 should have been deleted, still found in: {ids}"

@@ -65,6 +65,12 @@ def _pa_type(col_type: str):
         "json":    pa.string(),
         "jsonb":   pa.string(),
         "uuid":    pa.string(),
+        # Spanner / BigQuery native types
+        "int64":   pa.int64(),
+        "float64": pa.float64(),
+        "string":  pa.string(),
+        "bytes":   pa.binary(),
+        "numeric": pa.float64(),
     }.get(t, pa.string())
 
 
@@ -95,6 +101,11 @@ def _iceberg_type(col_type: str):
         "json":      StringType(),
         "jsonb":     StringType(),
         "uuid":      StringType(),
+        # Spanner / BigQuery native types
+        "int64":     LongType(),
+        "float64":   DoubleType(),
+        "string":    StringType(),
+        "bytes":     BinaryType(),
     }.get(t, StringType())
 
 
