@@ -77,6 +77,7 @@ def _load_sources():
     from sources.mongodb     import MongoDBSource
     from sources.dynamodb    import DynamoDBSource
     from sources.debezium    import DebeziumSource
+    from sources.oracle      import OracleSource
     from sources.sqlserver   import SQLServerSource
     from sources.snowflake_src import SnowflakeSource
     from sources.cockroachdb import CockroachDBSource
@@ -90,7 +91,7 @@ def _load_sources():
     register_source("mongodb",     MongoDBSource)
     register_source("dynamodb",    DynamoDBSource)
     register_source("debezium",    DebeziumSource)
-    register_source("oracle",      DebeziumSource)
+    register_source("oracle",      OracleSource)
     register_source("db2",         DebeziumSource)
     register_source("sqlserver",   SQLServerSource)
     register_source("snowflake",   SnowflakeSource)

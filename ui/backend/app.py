@@ -443,6 +443,12 @@ def _get_source_schema(source, src_type: str, cfg: dict, tables: List[str]) -> D
                     schema[tbl] = [k["AttributeName"] for k in desc["Table"]["AttributeDefinitions"]]
             return schema
 
+        if src_type == "oracle":
+            for tbl in tables:
+                owner, tbl_name = tbl.upper().split(".", 1) if "." in tbl else ("HR", tbl.upper())
+                schema[tbl] = [c.name for c in source.get_schema(tbl)]
+            return schema
+
     except Exception as exc:
         logger.warning("Column introspection failed: %s", exc)
     return schema
@@ -511,6 +517,12 @@ def _get_typed_schema(source, src_type: str, cfg: dict, tables: List[str]) -> Di
                     {"name": a["AttributeName"], "raw_type": a["AttributeType"], "dremio_type": _ddb_type_map.get(a["AttributeType"], "VARCHAR")}
                     for a in desc["Table"]["AttributeDefinitions"]
                 ]
+            return schema
+
+        if src_type == "oracle":
+            for tbl in tables:
+                cols = source.get_schema(tbl)
+                schema[tbl] = [{"name": c.name, "raw_type": c.data_type, "dremio_type": _dremio_type(c.data_type)} for c in cols]
             return schema
 
     except Exception as exc:
@@ -672,6 +684,28 @@ def _get_source_tables(source, src_type: str, cfg: dict) -> List[str]:
                     ORDER BY TABLE_SCHEMA, TABLE_NAME
                 """)
                 tables = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return tables
+
+        if src_type == "oracle":
+            conn_cfg = cfg.get("connection", {})
+            try:
+                import oracledb as cx
+            except ImportError:
+                import cx_Oracle as cx
+            host = conn_cfg.get("host", "localhost")
+            port = int(conn_cfg.get("port", 1521))
+            svc  = conn_cfg.get("service_name") or conn_cfg.get("database") or "ORCL"
+            dsn  = conn_cfg.get("dsn") or f"{host}:{port}/{svc}"
+            conn = cx.connect(user=conn_cfg["user"], password=conn_cfg.get("password", ""), dsn=dsn)
+            cur  = conn.cursor()
+            cur.execute(
+                "SELECT OWNER || '.' || TABLE_NAME FROM ALL_TABLES "
+                "WHERE OWNER NOT IN ('SYS','SYSTEM','OUTLN','DBSNMP','XDB','CTXSYS','MDSYS','WMSYS') "
+                "ORDER BY OWNER, TABLE_NAME"
+            )
+            tables = [r[0] for r in cur.fetchall()]
+            cur.close()
             conn.close()
             return tables
 

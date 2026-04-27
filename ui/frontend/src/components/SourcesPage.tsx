@@ -167,7 +167,7 @@ function SourceModal({ initial, onClose, onSaved }: {
   const [name, setName] = useState(initial?.name ?? '')
   const initConn = (t: string, existing?: Record<string, unknown>) =>
     ({ ...defaultConn(t), ...Object.fromEntries(Object.entries(existing ?? {}).map(([k, v]) => [k, String(v)])) })
-  const isDebeziumLike = (t: string) => t === 'debezium' || t === 'oracle' || t === 'db2'
+  const isDebeziumLike = (t: string) => t === 'debezium' || t === 'db2'
   const isPubSub = (t: string) => t === 'pubsub'
   const isDatastream = (t: string) => t === 'datastream'
   const isManualTables = (t: string) => isDebeziumLike(t) || isPubSub(t) || isDatastream(t)
@@ -309,6 +309,19 @@ function SourceModal({ initial, onClose, onSaved }: {
                   {type === 'oracle' && <>Start with: <code style={S.code}>cp debezium/oracle.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8765}:{conn.listen_port ?? 8765} debezium/server:2.7</code></>}
                   {type === 'db2'    && <>Start with: <code style={S.code}>cp debezium/db2.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8767}:{conn.listen_port ?? 8767} debezium/server:2.7</code></>}
                   {type === 'debezium' && <>Point <code style={S.code}>debezium.sink.http.url</code> at <code style={S.code}>http://&lt;host&gt;:{conn.listen_port ?? 8765}/events</code></>}
+                </div>
+              </div>
+            )}
+            {type === 'oracle' && (
+              <div style={S.setupHint}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                  🔶 Oracle LogMiner — native CDC (no Debezium required)
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  Requires Oracle 12c+ with supplemental logging enabled:<br />
+                  <code style={S.code}>ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;</code><br />
+                  <code style={S.code}>ALTER DATABASE ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;</code><br />
+                  CDC user needs: <code style={S.code}>LOGMINING</code>, <code style={S.code}>EXECUTE ON DBMS_LOGMNR</code>, <code style={S.code}>SELECT ON V_$LOGMNR_CONTENTS</code>, <code style={S.code}>SELECT ANY DICTIONARY</code>
                 </div>
               </div>
             )}
@@ -686,8 +699,11 @@ function connFields(type: string): FieldDef[] {
       { key: 'sslmode',  label: 'SSL mode', default: 'disable' },
     ]
     case 'oracle': return [
-      { key: 'listen_port', label: 'Listen port', default: '8765',
-        placeholder: 'Must match debezium.sink.http.url port in oracle.properties' },
+      { key: 'host',         label: 'Host',         default: 'localhost' },
+      { key: 'port',         label: 'Port',         default: '1521' },
+      { key: 'service_name', label: 'Service name', placeholder: 'ORCL or XEPDB1' },
+      { key: 'user',         label: 'User',         placeholder: 'cdcuser' },
+      { key: 'password',     label: 'Password',     secret: true },
     ]
     case 'db2': return [
       { key: 'listen_port', label: 'Listen port', default: '8767',
