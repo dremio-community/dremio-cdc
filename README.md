@@ -57,6 +57,7 @@ Writes Iceberg data files directly via PyIceberg, targeting **Dremio Open Catalo
 | **DB2** | Debezium Server → HTTP adapter | ASN Capture required |
 | **CockroachDB** | CHANGEFEED (native) | `kv.rangefeed.enabled = true` required |
 | **Google Cloud Spanner** | Change Streams | Auto-created on first connect |
+| **Google Cloud Pub/Sub** | Pull subscriptions (JSON messages) | Ack-on-commit; at-least-once delivery |
 
 ---
 
@@ -348,6 +349,68 @@ sources:
 
 </details>
 
+### Google Cloud Pub/Sub
+
+Pub/Sub CDC pulls JSON messages from one or more **pull subscriptions** and writes them to Iceberg tables in Dremio Open Catalog. Messages are acknowledged only after the Iceberg batch write succeeds (ack-on-commit), giving at-least-once delivery guarantees. A background thread extends ack deadlines to cover the full flush window so Pub/Sub never redelivers messages that are still being processed.
+
+Each subscription name maps to one Iceberg table. Table names are the subscription names with hyphens and dots converted to underscores (e.g. `orders-events` → `orders_events`).
+
+```bash
+# Grant the service account the subscriber role on each subscription
+gcloud pubsub subscriptions add-iam-policy-binding SUBSCRIPTION_NAME \
+  --member="serviceAccount:SA_EMAIL" \
+  --role="roles/pubsub.subscriber"
+```
+
+**In the UI:** Sources → Add Source → pubsub. Enter the GCP project ID and (optionally) a path to a service account key JSON. Leave the key path blank to use Application Default Credentials. After testing the connection, enter subscription names (one per line) — each becomes an Iceberg table.
+
+Metadata columns written to every row automatically:
+
+| Column | Description |
+|--------|-------------|
+| `_cdc_op` | `insert`, `update`, or `delete` (from `op_field` config, or always `insert`) |
+| `_cdc_source` | Connector name from config |
+| `_cdc_ts` | Pub/Sub message publish time |
+| `_cdc_ingest_ts` | Wall-clock time the CDC engine processed this row |
+
+<details>
+<summary>Headless YAML</summary>
+
+```yaml
+sources:
+  - name: my_pubsub
+    type: pubsub
+    connection:
+      project_id:            my-gcp-project-id
+      # credentials_file:    /path/to/service-account.json  # omit to use ADC
+      ack_deadline_seconds:  120
+      max_messages_per_pull: 100
+      pull_timeout_seconds:  5
+    tables:
+      - orders-subscription
+      - user-events-subscription
+    op_field: operation          # JSON field carrying insert/update/delete (optional)
+    primary_key_field: id        # for upserts in merge mode (optional)
+
+options:
+  sink_mode: iceberg
+
+iceberg:
+  type:             rest
+  uri:              https://catalog.dremio.cloud/api/iceberg
+  token:            ${DREMIO_PAT}
+  warehouse:        my-project-name
+  target_namespace: cdc
+  write_mode:       merge
+  sort_by:          event_ts    # Iceberg clustering key (optional)
+```
+
+See [`config.pubsub.example.yml`](config.pubsub.example.yml) for the full annotated reference.
+
+</details>
+
+---
+
 ### Oracle
 
 <a name="oracle"></a>
@@ -624,7 +687,7 @@ docker run -d \
 
 ```bash
 # Starts Postgres, MySQL, MongoDB, DynamoDB (LocalStack), SQL Server, Oracle,
-# Debezium Server, and a local Iceberg REST catalog
+# Debezium Server, Pub/Sub emulator, and a local Iceberg REST catalog
 docker compose up -d
 
 python main.py --ui
@@ -739,6 +802,9 @@ python3 -m pytest tests/test_e2e.py -m oracle -v
 
 # Run DB2 live tests
 python3 -m pytest tests/test_e2e.py -m db2 -v
+
+# Run Pub/Sub unit + emulator tests (requires pubsub-emulator container)
+PUBSUB_EMULATOR_HOST=localhost:8085 python3 -m pytest tests/test_pubsub.py -v
 ```
 
 ### Project structure
@@ -773,7 +839,8 @@ dremio-cdc/
 │   ├── sqlserver.py            # SQL Server CDC via pyodbc
 │   ├── snowflake_src.py        # Snowflake native STREAM objects
 │   ├── cockroachdb.py          # CockroachDB CHANGEFEED
-│   └── spanner.py              # Google Cloud Spanner Change Streams
+│   ├── spanner.py              # Google Cloud Spanner Change Streams
+│   └── pubsub.py               # Google Cloud Pub/Sub pull subscriptions
 │
 ├── ui/
 │   ├── backend/app.py          # Flask REST API + SPA server
@@ -787,6 +854,7 @@ dremio-cdc/
 │
 └── tests/
     ├── test_e2e.py             # Integration test suite (135+ tests)
+    ├── test_pubsub.py          # Pub/Sub unit + emulator integration tests (62 tests)
     └── fixtures/               # SQL seed files, Docker init scripts
 ```
 
