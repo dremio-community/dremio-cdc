@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, ChevronDown, CheckCircle, Cloud, Database, Loader, Save, Zap } from 'lucide-react'
-import { getTarget, saveTarget, testTarget, getNamespaces, TargetConfig, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig } from '../api/client'
+import { getTarget, saveTarget, testTarget, getNamespaces, getSources, TargetConfig, DremioConfig, IcebergConfig, NamespaceItem, TransformStudioConfig, Source } from '../api/client'
 import SecretFieldInput from './SecretFieldInput'
 
 export default function TargetPage() {
@@ -10,10 +10,12 @@ export default function TargetPage() {
     iceberg: { type: 'rest', write_mode: 'merge', target_namespace: 'cdc' },
     transform_studio: { enabled: false },
   })
+  const [sources, setSources] = useState<Source[]>([])
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveErr, setSaveErr] = useState('')
   const [namespaces, setNamespaces] = useState<NamespaceItem[] | null>(null)
   const [nsOpen, setNsOpen] = useState(false)
   const [nsLoading, setNsLoading] = useState(false)
@@ -29,6 +31,7 @@ export default function TargetPage() {
 
   useEffect(() => {
     getTarget().then(setCfg).catch(() => {})
+    getSources().then(setSources).catch(() => {})
   }, [])
 
   const updateDremio = (k: keyof DremioConfig, v: unknown) =>
@@ -68,8 +71,14 @@ export default function TargetPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    try { await saveTarget(cfg); setSaved(true); setTimeout(() => setSaved(false), 2000) }
-    catch {}
+    setSaveErr('')
+    try {
+      await saveTarget(cfg)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e: any) {
+      setSaveErr(e.message ?? 'Save failed')
+    }
     setSaving(false)
   }
 
@@ -80,10 +89,18 @@ export default function TargetPage() {
           <h1 style={S.title}>Target</h1>
           <p style={S.subtitle}>Where CDC events are written</p>
         </div>
-        <button style={S.btnPrimary} onClick={handleSave} disabled={saving}>
-          {saving ? <Loader size={13} /> : <Save size={13} />}
-          {saved ? 'Saved!' : 'Save'}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          <button style={S.btnPrimary} onClick={handleSave} disabled={saving}>
+            {saving ? <Loader size={13} /> : <Save size={13} />}
+            {saved ? 'Saved!' : 'Save'}
+          </button>
+          {saveErr && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f87171', fontSize: 12, maxWidth: 340, textAlign: 'right' }}>
+              <AlertCircle size={13} />
+              {saveErr}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Mode selector */}
@@ -103,6 +120,8 @@ export default function TargetPage() {
           onClick={() => setCfg(c => ({ ...c, sink_mode: 'iceberg' }))}
         />
       </div>
+
+      <CompatWarnings sources={sources} sinkMode={cfg.sink_mode} />
 
       {/* Dremio connection (always shown — used for metadata refresh in Mode B too) */}
       <Section title="Dremio connection" subtitle={cfg.sink_mode === 'dremio' ? 'Target for MERGE INTO writes' : 'Used for metadata refresh (optional when using Dremio Open Catalog)'}>
@@ -311,6 +330,32 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label style={S.label}>{label}</label>
       {children}
+    </div>
+  )
+}
+
+// Sources that require Mode B (Iceberg) — Mode A won't work correctly with these
+const MODE_B_REQUIRED: Record<string, string> = {
+  pubsub:  'Pub/Sub is a high-throughput streaming source — Mode A (SQL MERGE) is too slow and misses sort_by clustering and _cdc_ingest_ts metadata. Use Mode B (Open Catalog).',
+  spanner: 'Spanner Change Streams produce continuous high-volume events. Mode B (Open Catalog) is strongly recommended for throughput and schema evolution.',
+}
+
+function CompatWarnings({ sources, sinkMode }: { sources: Source[]; sinkMode: string }) {
+  if (sinkMode !== 'dremio') return null
+  const warnings = sources
+    .filter(s => MODE_B_REQUIRED[s.type])
+    .map(s => ({ name: s.name, type: s.type, msg: MODE_B_REQUIRED[s.type] }))
+  if (warnings.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+      {warnings.map(w => (
+        <div key={w.name} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#2d1a0a', border: '1px solid #92400e', borderRadius: 8, padding: '12px 16px' }}>
+          <AlertCircle size={15} color="#fb923c" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 13, color: '#fdba74', lineHeight: 1.6 }}>
+            <strong style={{ color: '#fb923c' }}>{w.name}</strong> ({w.type}) — {w.msg}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

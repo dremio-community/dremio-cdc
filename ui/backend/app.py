@@ -653,6 +653,22 @@ def api_target_get():
 def api_target_put():
     body = request.json or {}
     cfg = _load_raw()
+
+    # Validate sink_mode compatibility with configured sources
+    new_sink_mode = body.get("sink_mode", cfg.get("options", {}).get("sink_mode", "dremio"))
+    if new_sink_mode == "dremio":
+        _MODE_B_REQUIRED = {"pubsub", "spanner"}
+        incompatible = [
+            s["name"] for s in cfg.get("sources", [])
+            if s.get("type", "") in _MODE_B_REQUIRED
+        ]
+        if incompatible:
+            return jsonify({
+                "saved": False,
+                "error": f"Mode A (Dremio SQL) is not compatible with source(s): {', '.join(incompatible)}. "
+                         f"These sources require Mode B (Open Catalog) for correct operation."
+            }), 400
+
     if "dremio" in body:
         cfg["dremio"] = body["dremio"]
     if "iceberg" in body:
