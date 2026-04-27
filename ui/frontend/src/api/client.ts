@@ -75,12 +75,13 @@ export const discardAllDLQ   = () => req('DELETE', '/dlq')
 
 export interface Source {
   name: string
-  type: 'postgres' | 'mysql' | 'mongodb' | 'dynamodb' | 'debezium' | 'oracle' | 'db2'
+  type: 'postgres' | 'mysql' | 'mariadb' | 'mongodb' | 'dynamodb' | 'debezium' | 'oracle' | 'db2' | 'sqlserver' | 'snowflake' | 'cockroachdb' | 'spanner' | 'pubsub' | 'datastream'
   connection?: Record<string, unknown>
   listen_port?: number        // debezium only — top-level, not under connection
   tables: string[]
   columns?: Record<string, string[]>           // table -> selected columns; absent/empty = all columns
   masking?: Record<string, Record<string, string>> // table -> column -> function name
+  target_namespace?: string   // optional per-source override of global target
 }
 
 export interface DremioConfig {

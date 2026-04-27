@@ -302,12 +302,9 @@ function SourceModal({ initial, onClose, onSaved }: {
             {isDebeziumLike(type) && (
               <div style={S.setupHint}>
                 <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
-                  {type === 'oracle' ? '🔌 Requires Debezium Server (Oracle LogMiner)' :
-                   type === 'db2'    ? '🔌 Requires Debezium Server (DB2 ASN Capture)' :
-                                       '🔌 Requires Debezium Server'}
+                  {type === 'db2' ? '🔌 Requires Debezium Server (DB2 ASN Capture)' : '🔌 Requires Debezium Server'}
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  {type === 'oracle' && <>Start with: <code style={S.code}>cp debezium/oracle.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8765}:{conn.listen_port ?? 8765} debezium/server:2.7</code></>}
                   {type === 'db2'    && <>Start with: <code style={S.code}>cp debezium/db2.properties debezium/application.properties</code><br />then: <code style={S.code}>docker run -p {conn.listen_port ?? 8767}:{conn.listen_port ?? 8767} debezium/server:2.7</code></>}
                   {type === 'debezium' && <>Point <code style={S.code}>debezium.sink.http.url</code> at <code style={S.code}>http://&lt;host&gt;:{conn.listen_port ?? 8765}/events</code></>}
                 </div>

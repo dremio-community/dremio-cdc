@@ -40,7 +40,7 @@ export default function App() {
             ))}
           </nav>
           <div style={styles.sidebarFooter}>
-            <span style={{ color: '#64748b', fontSize: 11 }}>v1.0</span>
+            <span style={{ color: '#64748b', fontSize: 11 }}>v1.6</span>
           </div>
         </aside>
 
