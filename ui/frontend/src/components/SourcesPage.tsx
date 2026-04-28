@@ -188,7 +188,8 @@ function SourceModal({ initial, onClose, onSaved }: {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  const fields = connFields(type)
+  const dsMode = type === 'datastream' ? (conn.delivery_mode === 'pubsub' ? 'pubsub' : 'gcs') : null
+  const fields = dsMode === 'pubsub' ? connFieldsDatastreamPubSub() : connFields(type)
 
   const handleTest = async () => {
     setTesting(true)
@@ -334,20 +335,45 @@ function SourceModal({ initial, onClose, onSaved }: {
                 </div>
               </div>
             )}
-            {isDatastream(type) && (
-              <div style={S.setupHint}>
-                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
-                  ☁️ Google Cloud Datastream — GCS / Avro path
-                </div>
-                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  Reads Avro (or NDJSON) files written by Datastream into GCS. Specify tables as
-                  <code style={{ color: '#fdba74', margin: '0 4px' }}>SCHEMA.TABLE</code>
-                  (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>).
-                  Leave service account path blank to use Application Default Credentials (ADC).
-                  Set <code style={{ color: '#fdba74', margin: '0 4px' }}>STORAGE_EMULATOR_HOST</code> for local testing.
-                </div>
-              </div>
-            )}
+            {isDatastream(type) && (() => {
+              const setDsMode = (m: 'gcs' | 'pubsub') => setConn(c => ({ delivery_mode: m, project_id: c.project_id ?? '', credentials_file: c.credentials_file ?? '' }))
+              return (
+                <>
+                  {/* Delivery mode selector */}
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                    {([['gcs', '🗂️ GCS / Avro', 'Reads Avro or NDJSON files written by Datastream into a GCS bucket'], ['pubsub', '📨 Pub/Sub', 'Reads JSON messages delivered by Datastream to a Pub/Sub topic']] as const).map(([m, label, desc]) => (
+                      <div key={m} onClick={() => setDsMode(m)}
+                        style={{ flex: 1, padding: '10px 14px', borderRadius: 8, cursor: 'pointer', border: `2px solid ${dsMode === m ? '#38bdf8' : '#334155'}`, background: dsMode === m ? '#0f2942' : '#1e293b' }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: dsMode === m ? '#38bdf8' : '#94a3b8', marginBottom: 3 }}>{label}</div>
+                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>{desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={S.setupHint}>
+                    {dsMode === 'gcs' ? (
+                      <>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>☁️ Google Cloud Datastream — GCS / Avro path</div>
+                        <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                          Reads Avro (or NDJSON) files written by Datastream into GCS. Specify tables as{' '}
+                          <code style={{ color: '#fdba74' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>).
+                          Leave service account path blank to use Application Default Credentials (ADC).
+                          Set <code style={{ color: '#fdba74' }}>STORAGE_EMULATOR_HOST</code> for local testing.
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>📨 Google Cloud Datastream — Pub/Sub delivery</div>
+                        <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                          Reads JSON messages delivered by Datastream to a Pub/Sub topic. Each table maps to one subscription.
+                          Leave service account path blank to use Application Default Credentials (ADC).
+                          Set <code style={{ color: '#7dd3fc' }}>PUBSUB_EMULATOR_HOST</code> for local testing.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
 
             {fields.map(f => (
               <div style={S.field} key={f.key}>
@@ -741,6 +767,16 @@ function connFields(type: string): FieldDef[] {
     ]
     default: return []
   }
+}
+
+function connFieldsDatastreamPubSub(): FieldDef[] {
+  return [
+    { key: 'project_id',            label: 'GCP Project ID',                      placeholder: 'my-gcp-project' },
+    { key: 'credentials_file',      label: 'Service account key path (optional)', placeholder: '/path/to/key.json' },
+    { key: 'ack_deadline_seconds',  label: 'Ack deadline (seconds)',               default: '120' },
+    { key: 'max_messages_per_pull', label: 'Max messages per pull',                default: '100' },
+    { key: 'pull_timeout_seconds',  label: 'Pull timeout (seconds)',               default: '5' },
+  ]
 }
 
 function defaultDebeziumPort(type: string): number {

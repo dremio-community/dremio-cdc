@@ -549,9 +549,11 @@ class TestDatastreamGCSIntegration:
     EMULATOR = os.environ.get("STORAGE_EMULATOR_HOST", "http://localhost:4443")
 
     def _gcs_client(self):
+        import google.auth.credentials
         from google.cloud import storage
         return storage.Client(
             project="test-project",
+            credentials=google.auth.credentials.AnonymousCredentials(),
             client_options={"api_endpoint": self.EMULATOR},
         )
 

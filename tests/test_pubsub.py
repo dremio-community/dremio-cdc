@@ -689,13 +689,21 @@ def _unique_names():
     return f"topic-{suffix}", f"sub-{suffix}"
 
 
+def _emulator_client_options():
+    from google.api_core import client_options as co
+    return co.ClientOptions(api_endpoint=PUBSUB_EMULATOR_HOST)
+
+
 def _setup_emulator_topic_and_sub(topic_name: str = None, sub_name: str = None):
     """Create a fresh topic + subscription in the emulator."""
+    import google.auth.credentials
     from google.cloud import pubsub_v1
     if topic_name is None or sub_name is None:
         topic_name, sub_name = _unique_names()
-    pub = pubsub_v1.PublisherClient()
-    sub = pubsub_v1.SubscriberClient()
+    creds = google.auth.credentials.AnonymousCredentials()
+    opts  = _emulator_client_options()
+    pub = pubsub_v1.PublisherClient(credentials=creds, client_options=opts)
+    sub = pubsub_v1.SubscriberClient(credentials=creds, client_options=opts)
     topic_path = pub.topic_path(EMULATOR_PROJECT, topic_name)
     sub_path   = sub.subscription_path(EMULATOR_PROJECT, sub_name)
     pub.create_topic(request={"name": topic_path})

@@ -165,7 +165,16 @@ class PubSubSource(CDCSource):
                 "google-cloud-pubsub required: pip install google-cloud-pubsub"
             )
 
-        if self._creds_file:
+        import os
+        emulator_host = os.environ.get("PUBSUB_EMULATOR_HOST") or self.cfg.get("connection", {}).get("emulator_host")
+        if emulator_host:
+            import google.auth.credentials
+            from google.api_core import client_options as co
+            self._subscriber = pubsub_v1.SubscriberClient(
+                credentials=google.auth.credentials.AnonymousCredentials(),
+                client_options=co.ClientOptions(api_endpoint=emulator_host),
+            )
+        elif self._creds_file:
             from google.oauth2 import service_account
             creds = service_account.Credentials.from_service_account_file(
                 self._creds_file,
