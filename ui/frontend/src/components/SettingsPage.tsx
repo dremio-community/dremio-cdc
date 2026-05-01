@@ -100,7 +100,7 @@ export default function SettingsPage() {
           <input type="checkbox" checked={s.adaptive_batching ?? true}
             onChange={e => set('adaptive_batching', e.target.checked)} />
           <div>
-            <div style={{ color: '#e2e8f0', fontWeight: 500 }}>Adaptive batching</div>
+            <div style={{ color: 'var(--foreground)', fontWeight: 500 }}>Adaptive batching</div>
             <div style={S.hint}>Auto-tune batch size based on throughput and lag. High throughput → larger batches. Low lag → smaller batches.</div>
           </div>
         </label>
@@ -128,7 +128,7 @@ export default function SettingsPage() {
           <input type="checkbox" checked={s.snapshot_on_first_run ?? true}
             onChange={e => set('snapshot_on_first_run', e.target.checked)} />
           <div>
-            <div style={{ color: '#e2e8f0', fontWeight: 500 }}>Snapshot on first run</div>
+            <div style={{ color: 'var(--foreground)', fontWeight: 500 }}>Snapshot on first run</div>
             <div style={S.hint}>When enabled, the daemon reads every row in each table before switching to streaming mode. Disable if the table is already pre-populated in Dremio.</div>
           </div>
         </label>
@@ -137,8 +137,8 @@ export default function SettingsPage() {
           <input type="checkbox" checked={s.incremental_snapshot ?? false}
             onChange={e => set('incremental_snapshot', e.target.checked)} />
           <div>
-            <div style={{ color: '#e2e8f0', fontWeight: 500 }}>Incremental snapshot</div>
-            <div style={S.hint}>Read the table in chunks using a cursor column (e.g. <code style={{ color: '#94a3b8' }}>id</code>) instead of a single full scan. Streaming starts sooner and restarts resume mid-table. Recommended for tables with millions of rows.</div>
+            <div style={{ color: 'var(--foreground)', fontWeight: 500 }}>Incremental snapshot</div>
+            <div style={S.hint}>Read the table in chunks using a cursor column (e.g. <code style={{ color: 'var(--accent)' }}>id</code>) instead of a single full scan. Streaming starts sooner and restarts resume mid-table. Recommended for tables with millions of rows.</div>
           </div>
         </label>
 
@@ -169,8 +169,8 @@ export default function SettingsPage() {
           <input style={S.input} value={s.offset_db_path ?? './cdc_offsets.db'}
             onChange={e => set('offset_db_path', e.target.value)} />
           <div style={S.hint}>
-            SQLite: <code style={{ color: '#94a3b8' }}>./cdc_offsets.db</code>&nbsp;&nbsp;·&nbsp;&nbsp;
-            PostgreSQL: <code style={{ color: '#94a3b8' }}>postgresql://user:pw@host/db</code>
+            SQLite: <code style={{ color: 'var(--accent)' }}>./cdc_offsets.db</code>&nbsp;&nbsp;·&nbsp;&nbsp;
+            PostgreSQL: <code style={{ color: 'var(--accent)' }}>postgresql://user:pw@host/db</code>
             &nbsp;— PostgreSQL enables multiple engine processes to share offsets safely.
           </div>
         </div>
@@ -213,8 +213,8 @@ export default function SettingsPage() {
           </select>
           {secretsProvider === 'env' && (
             <div style={S.hint}>
-              Use <code style={{ color: '#94a3b8' }}>${'{'}ENV_VAR{'}'}</code> anywhere in config.yml — including inline, e.g.&nbsp;
-              <code style={{ color: '#94a3b8' }}>jdbc://${'{'}DB_HOST{'}'}/mydb</code>. No additional configuration required.
+              Use <code style={{ color: 'var(--accent)' }}>${'{'}ENV_VAR{'}'}</code> anywhere in config.yml — including inline, e.g.&nbsp;
+              <code style={{ color: 'var(--accent)' }}>jdbc://${'{'}DB_HOST{'}'}/mydb</code>. No additional configuration required.
             </div>
           )}
         </div>
@@ -225,13 +225,13 @@ export default function SettingsPage() {
               <label style={S.label}>Vault URL</label>
               <input style={S.input} value={vault.url ?? ''} placeholder="https://vault.example.com"
                 onChange={e => setV('url', e.target.value)} />
-              <div style={S.hint}>Or set <code style={{ color: '#94a3b8' }}>VAULT_ADDR</code> env var.</div>
+              <div style={S.hint}>Or set <code style={{ color: 'var(--accent)' }}>VAULT_ADDR</code> env var.</div>
             </div>
             <div>
               <label style={S.label}>KV mount point</label>
               <input style={S.input} value={vault.mount ?? 'secret'} placeholder="secret"
                 onChange={e => setV('mount', e.target.value)} />
-              <div style={S.hint}>KV v2 mount — default is <code style={{ color: '#94a3b8' }}>secret</code>.</div>
+              <div style={S.hint}>KV v2 mount — default is <code style={{ color: 'var(--accent)' }}>secret</code>.</div>
             </div>
           </div>
 
@@ -250,7 +250,7 @@ export default function SettingsPage() {
               <input style={{ ...S.input, fontFamily: 'monospace' }} type="password"
                 value={vault.token ?? ''} placeholder="hvs.xxxxxx  (or use ${VAULT_TOKEN})"
                 onChange={e => setV('token', e.target.value)} />
-              <div style={S.hint}>Tip: use <code style={{ color: '#94a3b8' }}>${'{'}VAULT_TOKEN{'}'}</code> to read from an env var instead of hardcoding.</div>
+              <div style={S.hint}>Tip: use <code style={{ color: 'var(--accent)' }}>${'{'}VAULT_TOKEN{'}'}</code> to read from an env var instead of hardcoding.</div>
             </div>
           ) : (<>
             <div style={S.grid2}>
@@ -267,11 +267,11 @@ export default function SettingsPage() {
                   onChange={e => setV('secret_id', e.target.value)} />
               </div>
             </div>
-            <div style={S.hint}>AppRole credentials can themselves reference env vars, e.g. <code style={{ color: '#94a3b8' }}>${'{'}VAULT_SECRET_ID{'}'}</code>.</div>
+            <div style={S.hint}>AppRole credentials can themselves reference env vars, e.g. <code style={{ color: 'var(--accent)' }}>${'{'}VAULT_SECRET_ID{'}'}</code>.</div>
           </>)}
 
           <div>
-            <label style={S.label}>Vault namespace <span style={{ color: '#475569', fontWeight: 400 }}>(Enterprise only)</span></label>
+            <label style={S.label}>Vault namespace <span style={{ color: 'var(--muted-foreground)', fontWeight: 400 }}>(Enterprise only)</span></label>
             <input style={S.input} value={vault.namespace ?? ''} placeholder="Optional — leave blank for open-source Vault"
               onChange={e => setV('namespace', e.target.value)} />
           </div>
@@ -283,7 +283,7 @@ export default function SettingsPage() {
             </button>
             {vaultTestResult && (
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
-                color: vaultTestResult.ok ? '#22c55e' : '#f87171' }}>
+                color: vaultTestResult.ok ? 'var(--status-success)' : 'var(--status-error)' }}>
                 {vaultTestResult.ok
                   ? <><CheckCircle size={14} /> Connected successfully</>
                   : <><XCircle size={14} /> {vaultTestResult.error}</>}
@@ -291,10 +291,10 @@ export default function SettingsPage() {
             )}
           </div>
 
-          <div style={{ ...S.hint, borderTop: '1px solid #1e293b', paddingTop: 12 }}>
+          <div style={{ ...S.hint, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             Once configured, reference secrets in config.yml as&nbsp;
-            <code style={{ color: '#94a3b8' }}>vault:secret/path#field</code>, e.g.&nbsp;
-            <code style={{ color: '#94a3b8' }}>vault:prod/postgres#password</code>
+            <code style={{ color: 'var(--accent)' }}>vault:secret/path#field</code>, e.g.&nbsp;
+            <code style={{ color: 'var(--accent)' }}>vault:prod/postgres#password</code>
           </div>
         </>)}
       </div>
@@ -305,16 +305,16 @@ export default function SettingsPage() {
 const S: Record<string, React.CSSProperties> = {
   page: { padding: 32, maxWidth: 700 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
-  title: { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
-  subtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
-  card: { background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 24, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 16 },
-  sectionTitle: { fontSize: 15, fontWeight: 700, color: '#f1f5f9' },
-  sectionSub: { color: '#64748b', fontSize: 13, marginTop: -8 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--foreground)' },
+  subtitle: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 },
+  card: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 16 },
+  sectionTitle: { fontSize: 15, fontWeight: 700, color: 'var(--foreground)' },
+  sectionSub: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: -8 },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 },
-  label: { display: 'block', color: '#94a3b8', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
-  input: { width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none' },
-  hint: { color: '#64748b', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
+  label: { display: 'block', color: 'var(--secondary-foreground)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
+  input: { width: '100%', background: '#fff', border: '1px solid var(--border)', borderRadius: 4, padding: '7px 10px', color: 'var(--foreground)', fontSize: 13, outline: 'none' },
+  hint: { color: 'var(--secondary-foreground)', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
   checkRow: { display: 'flex', gap: 12, cursor: 'pointer', alignItems: 'flex-start' },
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
-  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', padding: '7px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--primary)', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '7px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
 }

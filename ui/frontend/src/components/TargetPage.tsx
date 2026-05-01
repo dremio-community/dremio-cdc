@@ -131,18 +131,18 @@ export default function TargetPage() {
             {saving ? 'Saving…' : 'Save'}
           </button>
           {saved && savedAt && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#4ade80', fontSize: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--status-success)', fontSize: 12 }}>
               <CheckCircle size={13} />
               Saved at {savedAt.toLocaleTimeString()}
             </div>
           )}
           {!saved && savedAt && (
-            <div style={{ fontSize: 11, color: '#475569' }}>
+            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
               Last saved {savedAt.toLocaleTimeString()}
             </div>
           )}
           {saveErr && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f87171', fontSize: 12, maxWidth: 340, textAlign: 'right' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--status-error)', fontSize: 12, maxWidth: 340, textAlign: 'right' }}>
               <AlertCircle size={13} />
               {saveErr}
             </div>
@@ -151,39 +151,39 @@ export default function TargetPage() {
       </div>
 
       {/* Saved presets panel */}
-      <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
+      <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
         <button
-          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#cbd5e1', fontSize: 15, padding: 0, width: '100%' }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--foreground)', fontSize: 15, padding: 0, width: '100%' }}
           onClick={() => setPresetsOpen(o => !o)}
         >
           {presetsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           <BookMarked size={16} />
           <span style={{ fontWeight: 600 }}>Saved targets</span>
           {presets.length > 0 && (
-            <span style={{ background: '#1e293b', color: '#94a3b8', fontSize: 12, borderRadius: 10, padding: '1px 8px', marginLeft: 2 }}>{presets.length}</span>
+            <span style={{ background: 'var(--muted)', color: 'var(--secondary-foreground)', fontSize: 12, borderRadius: 10, padding: '1px 8px', marginLeft: 2 }}>{presets.length}</span>
           )}
         </button>
 
         {presetsOpen && (
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {presets.length === 0 && (
-              <div style={{ fontSize: 13, color: '#64748b' }}>No saved targets yet. Fill in your connection below and save a preset.</div>
+              <div style={{ fontSize: 13, color: 'var(--secondary-foreground)' }}>No saved targets yet. Fill in your connection below and save a preset.</div>
             )}
             {presets.map(p => (
-              <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1e293b', borderRadius: 8, padding: '10px 14px' }}>
-                <span style={{ flex: 1, fontSize: 15, fontFamily: 'monospace', color: '#e2e8f0' }}>{p.name}</span>
-                <span style={{ fontSize: 12, color: p.sink_mode === 'iceberg' ? '#a78bfa' : '#60a5fa', background: '#0f172a', borderRadius: 4, padding: '2px 8px' }}>
+              <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--muted)', borderRadius: 8, padding: '10px 14px' }}>
+                <span style={{ flex: 1, fontSize: 15, fontFamily: 'monospace', color: 'var(--foreground)' }}>{p.name}</span>
+                <span style={{ fontSize: 12, color: p.sink_mode === 'iceberg' ? 'var(--accent)' : 'var(--primary)', background: 'var(--selected)', borderRadius: 4, padding: '2px 8px' }}>
                   {p.sink_mode === 'iceberg' ? 'Mode B' : 'Mode A'}
                 </span>
-                <span style={{ fontSize: 13, color: '#64748b', fontFamily: 'monospace' }}>
+                <span style={{ fontSize: 13, color: 'var(--secondary-foreground)', fontFamily: 'monospace' }}>
                   {p.sink_mode === 'iceberg' ? (p.iceberg?.target_namespace ?? '') : (p.dremio?.target_namespace ?? '')}
                 </span>
                 <button
-                  style={{ fontSize: 13, background: '#0f172a', border: '1px solid #334155', borderRadius: 5, color: '#cbd5e1', padding: '4px 12px', cursor: 'pointer' }}
+                  style={{ fontSize: 13, background: '#fff', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--foreground)', padding: '4px 12px', cursor: 'pointer' }}
                   onClick={() => handleLoadPreset(p.name)}
                 >Load</button>
                 <button
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', padding: 2, display: 'flex' }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 2, display: 'flex' }}
                   onClick={() => handleDeletePreset(p.name)}
                   title="Delete preset"
                 ><Trash2 size={15} /></button>
@@ -211,14 +211,14 @@ export default function TargetPage() {
       <div style={S.modeRow}>
         <ModeCard
           active={cfg.sink_mode === 'dremio'}
-          icon={<Database size={20} color="#60a5fa" />}
+          icon={<Database size={20} color="var(--primary)" />}
           title="Mode A — Dremio SQL"
           description="MERGE INTO via Dremio REST API. Simple setup, works with any Dremio edition."
           onClick={() => setCfg(c => ({ ...c, sink_mode: 'dremio' }))}
         />
         <ModeCard
           active={cfg.sink_mode === 'iceberg'}
-          icon={<Cloud size={20} color="#a78bfa" />}
+          icon={<Cloud size={20} color="var(--accent)" />}
           title="Mode B — Open Catalog"
           description="Direct Iceberg writes via PyIceberg. High throughput. Recommended for Dremio Cloud & Enterprise."
           onClick={() => setCfg(c => ({ ...c, sink_mode: 'iceberg' }))}
@@ -259,15 +259,15 @@ export default function TargetPage() {
               </div>
               {nsOpen && namespaces && (
                 <div style={S.nsDropdown}>
-                  {namespaces.length === 0 && <div style={{ color: '#64748b', padding: '8px 12px', fontSize: 13 }}>No sources found</div>}
+                  {namespaces.length === 0 && <div style={{ color: 'var(--secondary-foreground)', padding: '8px 12px', fontSize: 13 }}>No sources found</div>}
                   {namespaces.filter(ns => ns.type === 'source').map(ns => (
                     <div key={ns.name} style={S.nsOption} onClick={() => { updateDremio('target_namespace', ns.name); setNsOpen(false) }}>
                       <span style={{ ...S.nsBadge, ...S.nsBadgeSource }}>source</span>
-                      <span style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0' }}>{ns.name}</span>
+                      <span style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--foreground)' }}>{ns.name}</span>
                     </div>
                   ))}
                   {namespaces.some(ns => ns.type === 'space') && (
-                    <div style={{ padding: '6px 12px', fontSize: 11, color: '#64748b', borderTop: '1px solid #1e293b' }}>
+                    <div style={{ padding: '6px 12px', fontSize: 11, color: 'var(--secondary-foreground)', borderTop: '1px solid var(--border)' }}>
                       Spaces cannot be used as CDC targets (no CREATE TABLE support)
                     </div>
                   )}
@@ -281,7 +281,7 @@ export default function TargetPage() {
         {/* Cloud / Enterprise options — collapsed by default */}
         <div style={{ marginTop: 4 }}>
           <button
-            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: 12, padding: '4px 0' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--secondary-foreground)', fontSize: 12, padding: '4px 0' }}
             onClick={() => setCloudOpen(o => !o)}
           >
             {cloudOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -304,7 +304,7 @@ export default function TargetPage() {
             {testing ? <Loader size={13} /> : null} Test connection
           </button>
           {testResult && (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: testResult.ok ? '#4ade80' : '#f87171' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: testResult.ok ? 'var(--status-success)' : 'var(--status-error)' }}>
               {testResult.ok ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
               {testResult.ok ? `Connected` : testResult.error}
             </span>
@@ -324,7 +324,7 @@ export default function TargetPage() {
               checked={cfg.transform_studio?.enabled ?? false}
               onChange={e => updateTS('enabled', e.target.checked)}
             />
-            <span style={{ color: '#94a3b8', fontSize: 13 }}>Enable Transform Studio integration</span>
+            <span style={{ color: 'var(--secondary-foreground)', fontSize: 13 }}>Enable Transform Studio integration</span>
           </label>
         </div>
         {cfg.transform_studio?.enabled && (
@@ -363,8 +363,8 @@ export default function TargetPage() {
         <Section title="Iceberg catalog" subtitle="Dremio Open Catalog, standalone Polaris, Nessie, or Glue">
           <div style={S.infoBox}>
             <strong>Dremio Open Catalog (recommended)</strong><br />
-            <span style={{ color: '#94a3b8' }}>Cloud: </span><code style={S.code}>https://catalog.dremio.cloud/api/iceberg</code><br />
-            <span style={{ color: '#94a3b8' }}>Enterprise: </span><code style={S.code}>http://&lt;host&gt;:8181/api/catalog</code>
+            <span style={{ color: 'var(--secondary-foreground)' }}>Cloud: </span><code style={S.code}>https://catalog.dremio.cloud/api/iceberg</code><br />
+            <span style={{ color: 'var(--secondary-foreground)' }}>Enterprise: </span><code style={S.code}>http://&lt;host&gt;:8181/api/catalog</code>
           </div>
 
           <div style={S.grid2}>
@@ -399,7 +399,7 @@ export default function TargetPage() {
           </Field>
 
           <details style={{ marginTop: 8 }}>
-            <summary style={{ color: '#64748b', fontSize: 13, cursor: 'pointer' }}>
+            <summary style={{ color: 'var(--secondary-foreground)', fontSize: 13, cursor: 'pointer' }}>
               Non-Dremio catalog (static S3 credentials)
             </summary>
             <div style={{ paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -429,10 +429,10 @@ function ModeCard({ active, icon, title, description, onClick }: {
     <div style={{ ...S.modeCard, ...(active ? S.modeCardActive : {}) }} onClick={onClick}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
         {icon}
-        <strong style={{ color: active ? '#f1f5f9' : '#94a3b8', fontSize: 14 }}>{title}</strong>
-        {active && <span style={{ marginLeft: 'auto', fontSize: 11, background: '#1e3a5f', color: '#60a5fa', padding: '2px 8px', borderRadius: 99 }}>selected</span>}
+        <strong style={{ color: active ? 'var(--foreground)' : 'var(--secondary-foreground)', fontSize: 14 }}>{title}</strong>
+        {active && <span style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--selected)', color: 'var(--accent)', padding: '2px 8px', borderRadius: 99 }}>selected</span>}
       </div>
-      <p style={{ color: '#64748b', fontSize: 13, lineHeight: 1.5 }}>{description}</p>
+      <p style={{ color: 'var(--secondary-foreground)', fontSize: 13, lineHeight: 1.5 }}>{description}</p>
     </div>
   )
 }
@@ -442,7 +442,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
     <div style={S.section}>
       <div style={{ marginBottom: 20 }}>
         <h2 style={S.sectionTitle}>{title}</h2>
-        {subtitle && <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>{subtitle}</p>}
+        {subtitle && <p style={{ color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 }}>{subtitle}</p>}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>{children}</div>
     </div>
@@ -474,10 +474,10 @@ function CompatWarnings({ sources, sinkMode }: { sources: Source[]; sinkMode: st
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
       {warnings.map(w => (
-        <div key={w.name} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#2d1a0a', border: '1px solid #92400e', borderRadius: 8, padding: '12px 16px' }}>
-          <AlertCircle size={15} color="#fb923c" style={{ flexShrink: 0, marginTop: 1 }} />
-          <div style={{ fontSize: 13, color: '#fdba74', lineHeight: 1.6 }}>
-            <strong style={{ color: '#fb923c' }}>{w.name}</strong> ({w.type}) — {w.msg}
+        <div key={w.name} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'var(--status-warning-bg)', border: '1px solid var(--status-warning)', borderRadius: 8, padding: '12px 16px' }}>
+          <AlertCircle size={15} color="var(--status-warning)" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 13, color: 'var(--foreground)', lineHeight: 1.6 }}>
+            <strong style={{ color: 'var(--status-warning)' }}>{w.name}</strong> ({w.type}) — {w.msg}
           </div>
         </div>
       ))}
@@ -488,24 +488,24 @@ function CompatWarnings({ sources, sinkMode }: { sources: Source[]; sinkMode: st
 const S: Record<string, React.CSSProperties> = {
   page: { padding: 32, maxWidth: 780 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
-  title: { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
-  subtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--foreground)' },
+  subtitle: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 },
   modeRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 },
-  modeCard: { background: '#1e293b', border: '2px solid #334155', borderRadius: 10, padding: 18, cursor: 'pointer', transition: 'all 0.15s' },
-  modeCardActive: { border: '2px solid #2563eb', background: '#0f1f3d' },
-  section: { background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 24, marginBottom: 20 },
-  sectionTitle: { fontSize: 15, fontWeight: 700, color: '#f1f5f9' },
+  modeCard: { background: 'var(--card)', border: '2px solid var(--border)', borderRadius: 10, padding: 18, cursor: 'pointer', transition: 'all 0.15s' },
+  modeCardActive: { border: '2px solid var(--primary)', background: 'var(--selected)' },
+  section: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 20 },
+  sectionTitle: { fontSize: 15, fontWeight: 700, color: 'var(--foreground)' },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
-  label: { display: 'block', color: '#94a3b8', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
-  input: { width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none' },
-  hint: { color: '#64748b', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
-  infoBox: { background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: '#93c5fd', lineHeight: 1.8, marginBottom: 4 },
-  code: { fontFamily: 'monospace', fontSize: 12, color: '#7dd3fc' },
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
-  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: '#0f172a', color: '#94a3b8', border: '1px solid #334155', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
-  nsDropdown: { position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#1e293b', border: '1px solid #334155', borderRadius: 8, marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 240, overflowY: 'auto' },
-  nsOption: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #0f172a' },
+  label: { display: 'block', color: 'var(--secondary-foreground)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
+  input: { width: '100%', background: '#fff', border: '1px solid var(--border)', borderRadius: 4, padding: '7px 10px', color: 'var(--foreground)', fontSize: 13, outline: 'none' },
+  hint: { color: 'var(--secondary-foreground)', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
+  infoBox: { background: 'var(--selected)', border: '1px solid var(--primary)', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: 'var(--foreground)', lineHeight: 1.8, marginBottom: 4 },
+  code: { fontFamily: 'monospace', fontSize: 12, color: 'var(--accent)' },
+  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--primary)', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  nsDropdown: { position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.1)', maxHeight: 240, overflowY: 'auto' },
+  nsOption: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' },
   nsBadge: { fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3, textTransform: 'uppercase' as const },
-  nsBadgeSource: { background: '#1e3a5f', color: '#60a5fa' },
-  nsBadgeSpace: { background: '#1a2e1a', color: '#86efac' },
+  nsBadgeSource: { background: 'var(--selected)', color: 'var(--accent)' },
+  nsBadgeSpace: { background: 'var(--status-success-bg)', color: 'var(--status-success)' },
 }

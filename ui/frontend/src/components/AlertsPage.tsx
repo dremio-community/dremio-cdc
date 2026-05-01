@@ -67,7 +67,7 @@ export default function AlertsPage() {
           <p style={S.subtitle}>Notify when lag or errors exceed thresholds</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {error && <span style={{ color: '#f87171', fontSize: 12 }}>{error}</span>}
+          {error && <span style={{ color: 'var(--status-error)', fontSize: 12 }}>{error}</span>}
           <button style={S.btnPrimary} onClick={handleSave} disabled={saving}>
             {saving ? <Loader size={13} /> : <Save size={13} />}
             {saved ? 'Saved!' : 'Save'}
@@ -81,8 +81,8 @@ export default function AlertsPage() {
           <input type="checkbox" checked={cfg.enabled ?? true}
             onChange={e => set('enabled', e.target.checked)} />
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0', fontWeight: 600 }}>
-              {cfg.enabled ? <Bell size={14} color="#60a5fa" /> : <BellOff size={14} color="#475569" />}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--foreground)', fontWeight: 600 }}>
+              {cfg.enabled ? <Bell size={14} color="var(--primary)" /> : <BellOff size={14} color="var(--muted-foreground)" />}
               Alerts enabled
             </div>
             <div style={S.hint}>When disabled, thresholds are still computed but no notifications are sent.</div>
@@ -198,7 +198,7 @@ function ChannelForm({ type, onAdd, onCancel }: {
   return (
     <div style={S.formBox}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <span style={{ color: '#f1f5f9', fontWeight: 600, fontSize: 13 }}>
+        <span style={{ color: 'var(--foreground)', fontWeight: 600, fontSize: 13 }}>
           New {type} channel
         </span>
         <button style={S.btnIcon} onClick={onCancel}><X size={14} /></button>
@@ -259,7 +259,7 @@ function ChannelForm({ type, onAdd, onCancel }: {
               <label style={S.checkRow}>
                 <input type="checkbox" checked={!!f.smtp_tls}
                   onChange={e => set('smtp_tls', e.target.checked)} />
-                <span style={{ color: '#e2e8f0' }}>Enable STARTTLS</span>
+                <span style={{ color: 'var(--foreground)' }}>Enable STARTTLS</span>
               </label>
             </Field>
           </div>
@@ -285,9 +285,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 function ChannelRow({ ch, onRemove }: { ch: AlertChannel; onRemove: () => void }) {
-  const icon = ch.type === 'slack' ? <Bell size={13} color="#60a5fa" />
-    : ch.type === 'email' ? <Mail size={13} color="#a78bfa" />
-    : <Webhook size={13} color="#34d399" />
+  const icon = ch.type === 'slack' ? <Bell size={13} color="var(--primary)" />
+    : ch.type === 'email' ? <Mail size={13} color="var(--accent)" />
+    : <Webhook size={13} color="var(--status-success)" />
 
   const summary = ch.type === 'slack' ? (ch.webhook_url ?? '').slice(0, 50) + '…'
     : ch.type === 'webhook' ? `${(ch.method ?? 'POST').toUpperCase()} ${ch.url ?? ''}`
@@ -297,21 +297,21 @@ function ChannelRow({ ch, onRemove }: { ch: AlertChannel; onRemove: () => void }
     <div style={S.channelRow}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {icon}
-        <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>{ch.type}</span>
-        <span style={{ color: '#475569', fontSize: 12, fontFamily: 'monospace' }}>{summary}</span>
+        <span style={{ color: 'var(--secondary-foreground)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>{ch.type}</span>
+        <span style={{ color: 'var(--muted-foreground)', fontSize: 12, fontFamily: 'monospace' }}>{summary}</span>
       </div>
-      <button style={S.btnIcon} onClick={onRemove}><Trash2 size={13} color="#f87171" /></button>
+      <button style={S.btnIcon} onClick={onRemove}><Trash2 size={13} color="var(--destructive)" /></button>
     </div>
   )
 }
 
 function AlertTypeBadge({ type }: { type: string }) {
   const colors: Record<string, { color: string; bg: string }> = {
-    lag:          { color: '#facc15', bg: '#1c1700' },
-    errors:       { color: '#f87171', bg: '#2d0a0a' },
-    worker_error: { color: '#f87171', bg: '#2d0a0a' },
+    lag:          { color: 'var(--status-warning)', bg: 'var(--status-warning-bg)' },
+    errors:       { color: 'var(--status-error)', bg: 'var(--status-error-bg)' },
+    worker_error: { color: 'var(--status-error)', bg: 'var(--status-error-bg)' },
   }
-  const s = colors[type] ?? { color: '#94a3b8', bg: '#1e293b' }
+  const s = colors[type] ?? { color: 'var(--secondary-foreground)', bg: 'var(--muted)' }
   return (
     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, color: s.color, background: s.bg }}>
       {type}
@@ -322,26 +322,26 @@ function AlertTypeBadge({ type }: { type: string }) {
 const S: Record<string, React.CSSProperties> = {
   page: { padding: 32, maxWidth: 860 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
-  title: { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
-  subtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
-  card: { background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 24, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 16 },
-  sectionTitle: { fontSize: 15, fontWeight: 700, color: '#f1f5f9' },
-  sectionSub: { color: '#64748b', fontSize: 13, marginTop: -8 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--foreground)' },
+  subtitle: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 },
+  card: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 16 },
+  sectionTitle: { fontSize: 15, fontWeight: 700, color: 'var(--foreground)' },
+  sectionSub: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: -8 },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
   grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 },
-  label: { display: 'block', color: '#94a3b8', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
-  input: { width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none' },
-  hint: { color: '#64748b', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
+  label: { display: 'block', color: 'var(--secondary-foreground)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 },
+  input: { width: '100%', background: '#fff', border: '1px solid var(--border)', borderRadius: 4, padding: '7px 10px', color: 'var(--foreground)', fontSize: 13, outline: 'none' },
+  hint: { color: 'var(--secondary-foreground)', fontSize: 11, marginTop: 6, lineHeight: 1.5 },
   checkRow: { display: 'flex', gap: 12, cursor: 'pointer', alignItems: 'flex-start' },
-  empty: { color: '#475569', fontSize: 13, padding: '12px 0' },
-  formBox: { background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 18, display: 'flex', flexDirection: 'column', gap: 14 },
-  channelRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', border: '1px solid #1e293b', borderRadius: 6, padding: '10px 14px' },
+  empty: { color: 'var(--secondary-foreground)', fontSize: 13, padding: '12px 0' },
+  formBox: { background: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 8, padding: 18, display: 'flex', flexDirection: 'column', gap: 14 },
+  channelRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  th: { textAlign: 'left' as const, color: '#64748b', fontWeight: 600, padding: '6px 10px', borderBottom: '1px solid #1e293b', fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
-  td: { padding: '7px 10px', color: '#94a3b8', verticalAlign: 'top' as const },
-  trEven: { background: '#0f172a14' },
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
-  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
-  btnAdd: { background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 },
-  btnIcon: { background: 'none', border: 'none', cursor: 'pointer', color: '#475569', display: 'flex', alignItems: 'center', padding: 4 },
+  th: { textAlign: 'left' as const, color: 'var(--muted-foreground)', fontWeight: 600, padding: '6px 10px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.04em', background: 'var(--muted)' },
+  td: { padding: '7px 10px', color: 'var(--secondary-foreground)', verticalAlign: 'top' as const },
+  trEven: { background: 'var(--muted)' },
+  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--primary)', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  btnAdd: { background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 },
+  btnIcon: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', padding: 4 },
 }

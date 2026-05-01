@@ -76,11 +76,11 @@ export default function StatusPage() {
         {stateIcon(state)}
         <span style={{ fontWeight: 600 }}>Engine: {state}</span>
         {status?.engine_started_at && (
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>· up {reltime(status.engine_started_at)}</span>
+          <span style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>· up {reltime(status.engine_started_at)}</span>
         )}
-        {status && <span style={{ color: '#94a3b8', fontSize: 12, marginLeft: 4 }}>· {status.config_path}</span>}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#475569' }}>
-          Prometheus metrics at <code style={{ color: '#60a5fa' }}>/metrics</code>
+        {status && <span style={{ color: 'var(--muted-foreground)', fontSize: 12, marginLeft: 4 }}>· {status.config_path}</span>}
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--secondary-foreground)' }}>
+          Prometheus metrics at <code style={{ color: 'var(--accent)' }}>/metrics</code>
         </span>
       </div>
 
@@ -91,7 +91,7 @@ export default function StatusPage() {
           <SummaryTile
             label="Total errors"
             value={sum.total_errors.toLocaleString()}
-            color={sum.total_errors > 0 ? '#f87171' : undefined}
+            color={sum.total_errors > 0 ? 'var(--status-error)' : undefined}
           />
           <SummaryTile label="Active workers" value={`${sum.active_workers} / ${sum.total_workers}`} />
           <SummaryTile
@@ -107,7 +107,7 @@ export default function StatusPage() {
       {/* Worker grid */}
       {!status?.workers?.length ? (
         <div style={S.empty}>
-          <Activity size={32} color="#334155" />
+          <Activity size={32} color="var(--muted-foreground)" />
           <p>No workers running. Configure sources and start the engine.</p>
         </div>
       ) : (
@@ -156,7 +156,7 @@ function WorkerCard({ w, onReset, engineStopped, targetNamespace, sinkMode }: {
         <div>
           <div style={S.cardSource}>{w.source}</div>
           <div style={S.cardTable}>{w.table}</div>
-          {sinkLabel && <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 2, fontFamily: 'monospace' }}>{sinkLabel}</div>}
+          {sinkLabel && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2, fontFamily: 'monospace' }}>{sinkLabel}</div>}
         </div>
         <StateBadge state={displayState} />
       </div>
@@ -181,12 +181,12 @@ function WorkerCard({ w, onReset, engineStopped, targetNamespace, sinkMode }: {
 
       {/* Pipeline lag + error count */}
       {(w.pipeline_lag_seconds !== null || w.error_count > 0) && (
-        <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#64748b' }}>
+        <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--secondary-foreground)' }}>
           {w.pipeline_lag_seconds !== null && (
-            <span>pipeline lag: <strong style={{ color: '#94a3b8' }}>{w.pipeline_lag_seconds}s</strong></span>
+            <span>pipeline lag: <strong style={{ color: 'var(--muted-foreground)' }}>{w.pipeline_lag_seconds}s</strong></span>
           )}
           {w.error_count > 0 && (
-            <span style={{ color: '#f87171' }}>errors: <strong>{w.error_count}</strong></span>
+            <span style={{ color: 'var(--status-error)' }}>errors: <strong>{w.error_count}</strong></span>
           )}
         </div>
       )}
@@ -194,9 +194,9 @@ function WorkerCard({ w, onReset, engineStopped, targetNamespace, sinkMode }: {
       {/* Schema drift warning */}
       {w.schema_drift && (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6,
-          fontSize: 11, color: '#fbbf24', background: '#1c1700',
-          border: '1px solid #78350f', borderRadius: 6, padding: '6px 10px' }}>
-          <AlertCircle size={12} style={{ marginTop: 1, flexShrink: 0 }} />
+          fontSize: 11, color: 'var(--foreground)', background: 'var(--status-warning-bg)',
+          border: '1px solid var(--status-warning)', borderRadius: 6, padding: '6px 10px' }}>
+          <AlertCircle size={12} style={{ marginTop: 1, flexShrink: 0, color: 'var(--status-warning)' }} />
           <span><strong>Schema drift:</strong> {w.schema_drift}</span>
         </div>
       )}
@@ -217,7 +217,7 @@ function WorkerCard({ w, onReset, engineStopped, targetNamespace, sinkMode }: {
           Reset offset
         </button>
         {w.started_at && (
-          <span style={{ color: '#475569', fontSize: 11 }}>started {reltime(w.started_at)}</span>
+          <span style={{ color: 'var(--muted-foreground)', fontSize: 11 }}>started {reltime(w.started_at)}</span>
         )}
       </div>
     </div>
@@ -240,7 +240,7 @@ function Sparkline({ data }: { data: [number, number][] }) {
             width={BAR_W}
             height={bh}
             rx={1}
-            fill="#3b82f6"
+            fill="var(--primary)"
             opacity={0.7}
           />
         )
@@ -260,11 +260,11 @@ function Metric({ label, value, color }: { label: string; value: string; color?:
 
 function StateBadge({ state }: { state: string }) {
   const map: Record<string, { color: string; bg: string }> = {
-    streaming:    { color: '#4ade80', bg: '#052e16' },
-    snapshotting: { color: '#facc15', bg: '#1c1700' },
-    paused:       { color: '#94a3b8', bg: '#1e293b' },
-    error:        { color: '#f87171', bg: '#2d0a0a' },
-    idle:         { color: '#64748b', bg: '#1e293b' },
+    streaming:    { color: 'var(--status-success)', bg: 'var(--status-success-bg)' },
+    snapshotting: { color: 'var(--status-warning)', bg: 'var(--status-warning-bg)' },
+    paused:       { color: 'var(--secondary-foreground)', bg: 'var(--muted)' },
+    error:        { color: 'var(--status-error)', bg: 'var(--status-error-bg)' },
+    idle:         { color: 'var(--secondary-foreground)', bg: 'var(--muted)' },
   }
   const s = map[state] ?? map.idle
   return (
@@ -275,24 +275,24 @@ function StateBadge({ state }: { state: string }) {
 }
 
 function stateIcon(state: string) {
-  if (state === 'running') return <CheckCircle size={16} color="#4ade80" />
-  if (state === 'starting') return <Loader size={16} color="#facc15" />
-  if (state === 'error') return <AlertCircle size={16} color="#f87171" />
-  return <Pause size={16} color="#64748b" />
+  if (state === 'running') return <CheckCircle size={16} color="var(--status-success)" />
+  if (state === 'starting') return <Loader size={16} color="var(--status-warning)" />
+  if (state === 'error') return <AlertCircle size={16} color="var(--status-error)" />
+  return <Pause size={16} color="var(--secondary-foreground)" />
 }
 
 function bannerStyle(state: string): React.CSSProperties {
-  if (state === 'running') return { borderColor: '#166534', background: '#052e16' }
-  if (state === 'starting') return { borderColor: '#854d0e', background: '#1c1700' }
-  if (state === 'error') return { borderColor: '#7f1d1d', background: '#2d0a0a' }
-  return {}
+  if (state === 'running') return { borderColor: 'var(--status-success)', background: 'var(--status-success-bg)' }
+  if (state === 'starting') return { borderColor: 'var(--status-warning)', background: 'var(--status-warning-bg)' }
+  if (state === 'error') return { borderColor: 'var(--status-error)', background: 'var(--status-error-bg)' }
+  return { background: 'var(--muted)', borderColor: 'var(--border)' }
 }
 
 function lagColor(lag: number | null): string | undefined {
   if (lag === null) return undefined
-  if (lag < 5) return '#4ade80'
-  if (lag < 30) return '#facc15'
-  return '#f87171'
+  if (lag < 5) return 'var(--status-success)'
+  if (lag < 30) return 'var(--status-warning)'
+  return 'var(--status-error)'
 }
 
 function reltime(ts: number) {
@@ -306,67 +306,67 @@ function reltime(ts: number) {
 const S: Record<string, React.CSSProperties> = {
   page: { padding: 32, maxWidth: 1200 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
-  subtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--foreground)' },
+  subtitle: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 },
   banner: {
     display: 'flex', alignItems: 'center', gap: 10,
-    padding: '10px 14px', borderRadius: 8, border: '1px solid #1e293b',
-    background: '#1e293b', marginBottom: 16, fontSize: 13,
+    padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)',
+    background: 'var(--muted)', marginBottom: 16, fontSize: 13,
   },
   summaryBar: { display: 'flex', gap: 12, marginBottom: 24 },
   summaryTile: {
-    background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+    background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
     padding: '12px 18px', flex: 1, minWidth: 100,
   },
-  summaryVal: { fontSize: 20, fontWeight: 700, color: '#f1f5f9' },
-  summaryLabel: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  summaryVal: { fontSize: 20, fontWeight: 700, color: 'var(--foreground)' },
+  summaryLabel: { fontSize: 11, color: 'var(--secondary-foreground)', marginTop: 2 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 },
   card: {
-    background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 18,
+    background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: 18,
     display: 'flex', flexDirection: 'column', gap: 12,
   },
-  cardError: { borderColor: '#7f1d1d', background: '#1a0f0f' },
+  cardError: { borderColor: 'var(--status-error)' },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardSource: { fontSize: 11, color: '#64748b', fontFamily: 'monospace', marginBottom: 2 },
-  cardTable: { fontSize: 14, fontWeight: 600, color: '#e2e8f0', fontFamily: 'monospace' },
+  cardSource: { fontSize: 11, color: 'var(--secondary-foreground)', fontFamily: 'monospace', marginBottom: 2 },
+  cardTable: { fontSize: 14, fontWeight: 600, color: 'var(--foreground)', fontFamily: 'monospace' },
   badge: { fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99 },
   metrics: { display: 'flex', gap: 12 },
   metric: { flex: 1 },
-  metricVal: { fontSize: 17, fontWeight: 700, color: '#f1f5f9' },
-  metricLabel: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  metricVal: { fontSize: 17, fontWeight: 700, color: 'var(--foreground)' },
+  metricLabel: { fontSize: 11, color: 'var(--secondary-foreground)', marginTop: 2 },
   workerError: {
-    display: 'flex', alignItems: 'center', gap: 6, color: '#f87171',
-    fontSize: 12, background: '#2d0a0a', padding: '6px 10px', borderRadius: 6,
+    display: 'flex', alignItems: 'center', gap: 6, color: 'var(--status-error)',
+    fontSize: 12, background: 'var(--status-error-bg)', padding: '6px 10px', borderRadius: 6,
   },
-  offset: { fontSize: 11, color: '#475569', fontFamily: 'monospace' },
+  offset: { fontSize: 11, color: 'var(--muted-foreground)', fontFamily: 'monospace' },
   cardFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  actionMsg: { color: '#94a3b8', fontSize: 12 },
+  actionMsg: { color: 'var(--muted-foreground)', fontSize: 12 },
   error: {
-    display: 'flex', alignItems: 'center', gap: 8, color: '#f87171',
-    background: '#2d0a0a', border: '1px solid #7f1d1d', borderRadius: 8,
+    display: 'flex', alignItems: 'center', gap: 8, color: 'var(--status-error)',
+    background: 'var(--status-error-bg)', border: '1px solid var(--status-error)', borderRadius: 8,
     padding: '10px 14px', marginBottom: 20, fontSize: 13,
   },
   empty: {
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-    color: '#475569', padding: '60px 0', textAlign: 'center',
+    color: 'var(--secondary-foreground)', padding: '60px 0', textAlign: 'center',
   },
   btnPrimary: {
     display: 'flex', alignItems: 'center', gap: 6,
-    background: '#2563eb', color: '#fff', border: 'none',
+    background: 'var(--primary)', color: '#fff', border: 'none',
     padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13,
   },
   btnDanger: {
     display: 'flex', alignItems: 'center', gap: 6,
-    background: '#dc2626', color: '#fff', border: 'none',
+    background: 'var(--destructive)', color: '#fff', border: 'none',
     padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13,
   },
   btnSecondary: {
     display: 'flex', alignItems: 'center', gap: 6,
-    background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+    background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)',
     padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
   },
   btnReset: {
-    background: 'none', color: '#475569', border: '1px solid #334155',
+    background: 'none', color: 'var(--secondary-foreground)', border: '1px solid var(--border)',
     padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 11,
   },
 }

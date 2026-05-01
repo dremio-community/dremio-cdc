@@ -50,7 +50,7 @@ export default function SourcesPage() {
           <p style={S.subtitle}>Database connections to replicate from</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {msg && <span style={{ color: '#94a3b8', fontSize: 13 }}>{msg}</span>}
+          {msg && <span style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>{msg}</span>}
           <button style={S.btnPrimary} onClick={() => { setEditSource(null); setShowAdd(true) }}>
             <Plus size={15} /> Add source
           </button>
@@ -59,7 +59,7 @@ export default function SourcesPage() {
 
       {sources.length === 0 ? (
         <div style={S.empty}>
-          <Database size={36} color="#334155" />
+          <Database size={36} color="var(--muted-foreground)" />
           <p>No sources configured yet.</p>
           <button style={S.btnPrimary} onClick={() => setShowAdd(true)}><Plus size={14} /> Add your first source</button>
         </div>
@@ -101,7 +101,7 @@ function SourceCard({ source, onEdit, onDelete }: { source: Source; onEdit: () =
           <span style={{ ...S.typeBadge, ...typeColor(source.type) }}>{source.type}</span>
           <span style={S.cardName}>{source.name}</span>
           {source.type === 'debezium' && source.listen_port && (
-            <span style={{ ...S.tableCount, color: '#fdba74' }}>port {source.listen_port}</span>
+            <span style={{ ...S.tableCount, color: 'var(--status-warning)' }}>port {source.listen_port}</span>
           )}
           <span style={S.tableCount}>{source.tables?.length ?? 0} tables</span>
         </div>
@@ -109,11 +109,11 @@ function SourceCard({ source, onEdit, onDelete }: { source: Source; onEdit: () =
           <button style={S.btnSmall} onClick={() => setExpanded(!expanded)}>
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
-          <button style={{ ...S.btnSmall, color: '#93c5fd' }} onClick={() => setShowCreate(true)} title="Create tables in Dremio">
+          <button style={{ ...S.btnSmall, color: 'var(--accent)' }} onClick={() => setShowCreate(true)} title="Create tables in Dremio">
             <Table size={13} /> Create in Dremio
           </button>
           <button style={S.btnSmall} onClick={onEdit}>Edit</button>
-          <button style={{ ...S.btnSmall, color: '#f87171' }} onClick={onDelete}><Trash2 size={13} /></button>
+          <button style={{ ...S.btnSmall, color: 'var(--destructive)' }} onClick={onDelete}><Trash2 size={13} /></button>
         </div>
       </div>
       {expanded && (
@@ -128,11 +128,11 @@ function SourceCard({ source, onEdit, onDelete }: { source: Source; onEdit: () =
                   onClick={() => setExpandedTable(isExpanded ? null : t)}
                 >
                   {cols?.length ? <ChevronRight size={12} style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: '0.15s' }} /> : <span style={{ width: 12 }} />}
-                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#94a3b8' }}>{t}</span>
+                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--secondary-foreground)' }}>{t}</span>
                   {cols?.length ? (
                     <span style={S.colBadge}><Columns size={10} /> {cols.length} cols</span>
                   ) : (
-                    <span style={{ ...S.colBadge, color: '#475569' }}>all cols</span>
+                    <span style={{ ...S.colBadge, color: 'var(--muted-foreground)' }}>all cols</span>
                   )}
                 </div>
                 {isExpanded && cols?.length && (
@@ -140,7 +140,7 @@ function SourceCard({ source, onEdit, onDelete }: { source: Source; onEdit: () =
                     {cols.map(c => {
                       const fn = source.masking?.[t]?.[c]
                       return (
-                        <span key={c} style={{ ...S.colPill, ...(fn ? { borderColor: '#854d0e', color: '#fde68a' } : {}) }}>
+                        <span key={c} style={{ ...S.colPill, ...(fn ? { borderColor: 'var(--status-warning)', color: 'var(--status-warning)' } : {}) }}>
                           {c}{fn ? ` [${fn}]` : ''}
                         </span>
                       )
@@ -302,7 +302,7 @@ function SourceModal({ initial, onClose, onSaved }: {
 
             {isDebeziumLike(type) && (
               <div style={S.setupHint}>
-                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>
                   {type === 'db2' ? '🔌 Requires Debezium Server (DB2 ASN Capture)' : '🔌 Requires Debezium Server'}
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -313,7 +313,7 @@ function SourceModal({ initial, onClose, onSaved }: {
             )}
             {type === 'oracle' && (
               <div style={S.setupHint}>
-                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>
                   🔶 Oracle LogMiner — native CDC (no Debezium required)
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -326,7 +326,7 @@ function SourceModal({ initial, onClose, onSaved }: {
             )}
             {isPubSub(type) && (
               <div style={S.setupHint}>
-                <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>
                   ☁️ Google Cloud Pub/Sub — pull subscription
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -343,30 +343,30 @@ function SourceModal({ initial, onClose, onSaved }: {
                   <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
                     {([['gcs', '🗂️ GCS / Avro', 'Reads Avro or NDJSON files written by Datastream into a GCS bucket'], ['pubsub', '📨 Pub/Sub', 'Reads JSON messages delivered by Datastream to a Pub/Sub topic']] as const).map(([m, label, desc]) => (
                       <div key={m} onClick={() => setDsMode(m)}
-                        style={{ flex: 1, padding: '10px 14px', borderRadius: 8, cursor: 'pointer', border: `2px solid ${dsMode === m ? '#38bdf8' : '#334155'}`, background: dsMode === m ? '#0f2942' : '#1e293b' }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: dsMode === m ? '#38bdf8' : '#94a3b8', marginBottom: 3 }}>{label}</div>
-                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>{desc}</div>
+                        style={{ flex: 1, padding: '10px 14px', borderRadius: 8, cursor: 'pointer', border: `2px solid ${dsMode === m ? 'var(--primary)' : 'var(--border)'}`, background: dsMode === m ? 'var(--selected)' : 'var(--card)' }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: dsMode === m ? 'var(--accent)' : 'var(--secondary-foreground)', marginBottom: 3 }}>{label}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', lineHeight: 1.4 }}>{desc}</div>
                       </div>
                     ))}
                   </div>
                   <div style={S.setupHint}>
                     {dsMode === 'gcs' ? (
                       <>
-                        <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>☁️ Google Cloud Datastream — GCS / Avro path</div>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>☁️ Google Cloud Datastream — GCS / Avro path</div>
                         <div style={{ fontSize: 12, lineHeight: 1.6 }}>
                           Reads Avro (or NDJSON) files written by Datastream into GCS. Specify tables as{' '}
-                          <code style={{ color: '#fdba74' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>).
+                          <code style={{ color: 'var(--status-warning)' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: 'var(--status-warning)' }}>HR.EMPLOYEES</code>).
                           Leave service account path blank to use Application Default Credentials (ADC).
-                          Set <code style={{ color: '#fdba74' }}>STORAGE_EMULATOR_HOST</code> for local testing.
+                          Set <code style={{ color: 'var(--status-warning)' }}>STORAGE_EMULATOR_HOST</code> for local testing.
                         </div>
                       </>
                     ) : (
                       <>
-                        <div style={{ fontWeight: 600, marginBottom: 6, color: '#e2e8f0' }}>📨 Google Cloud Datastream — Pub/Sub delivery</div>
+                        <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>📨 Google Cloud Datastream — Pub/Sub delivery</div>
                         <div style={{ fontSize: 12, lineHeight: 1.6 }}>
                           Reads JSON messages delivered by Datastream to a Pub/Sub topic. Each table maps to one subscription.
                           Leave service account path blank to use Application Default Credentials (ADC).
-                          Set <code style={{ color: '#7dd3fc' }}>PUBSUB_EMULATOR_HOST</code> for local testing.
+                          Set <code style={{ color: 'var(--accent)' }}>PUBSUB_EMULATOR_HOST</code> for local testing.
                         </div>
                       </>
                     )}
@@ -398,23 +398,23 @@ function SourceModal({ initial, onClose, onSaved }: {
             ))}
 
             <div style={S.field}>
-              <label style={S.label}>TARGET NAMESPACE <span style={{ color: '#64748b', fontWeight: 400, fontSize: 10 }}>(optional — overrides global target)</span></label>
+              <label style={S.label}>TARGET NAMESPACE <span style={{ color: 'var(--muted-foreground)', fontWeight: 400, fontSize: 10 }}>(optional — overrides global target)</span></label>
               <input style={S.input} type="text" value={targetNs}
                 onChange={e => setTargetNs(e.target.value)}
                 placeholder="e.g. hudi_finance (leave blank to use global target)" />
             </div>
 
             {testResult && (
-              <div style={{ ...S.testBanner, background: testResult.ok ? '#052e16' : '#2d0a0a', borderColor: testResult.ok ? '#166534' : '#7f1d1d' }}>
+              <div style={{ ...S.testBanner, background: testResult.ok ? 'var(--status-success-bg)' : 'var(--status-error-bg)', borderColor: testResult.ok ? 'var(--status-success)' : 'var(--status-error)' }}>
                 {testResult.ok
                   ? isDebeziumLike(type)
-                    ? <><CheckCircle size={14} color="#4ade80" /> Listener ready on port {conn.listen_port ?? 8765} — Debezium Server will push events here</>
+                    ? <><CheckCircle size={14} color="var(--status-success)" /> Listener ready on port {conn.listen_port ?? 8765} — Debezium Server will push events here</>
                     : isPubSub(type)
-                    ? <><CheckCircle size={14} color="#4ade80" /> Connected to Pub/Sub project — enter subscription names below</>
+                    ? <><CheckCircle size={14} color="var(--status-success)" /> Connected to Pub/Sub project — enter subscription names below</>
                     : isDatastream(type)
-                    ? <><CheckCircle size={14} color="#4ade80" /> GCS bucket reachable — enter tables as SCHEMA.TABLE below</>
-                    : <><CheckCircle size={14} color="#4ade80" /> Connected — found {available.length} tables</>
-                  : <><AlertCircle size={14} color="#f87171" /> {testResult.error}</>}
+                    ? <><CheckCircle size={14} color="var(--status-success)" /> GCS bucket reachable — enter tables as SCHEMA.TABLE below</>
+                    : <><CheckCircle size={14} color="var(--status-success)" /> Connected — found {available.length} tables</>
+                  : <><AlertCircle size={14} color="var(--status-error)" /> {testResult.error}</>}
               </div>
             )}
 
@@ -434,7 +434,7 @@ function SourceModal({ initial, onClose, onSaved }: {
           </>
         ) : (
           <>
-            <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 12 }}>
+            <p style={{ color: 'var(--secondary-foreground)', fontSize: 13, marginBottom: 12 }}>
               Check the tables to replicate, then expand each to filter columns.
             </p>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -494,7 +494,7 @@ function SourceModal({ initial, onClose, onSaved }: {
                                     checked={isSel}
                                     onChange={() => toggleColumn(t, col)}
                                   />
-                                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col}</span>
+                                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col}</span>
                                 </label>
                                 {isSel && (
                                   <select
@@ -519,11 +519,11 @@ function SourceModal({ initial, onClose, onSaved }: {
               })}
 
               {available.length === 0 && (
-                <div style={{ color: '#64748b', padding: 16 }}>
+                <div style={{ color: 'var(--secondary-foreground)', padding: 16 }}>
                   {isPubSub(type)
                     ? <>Enter one Pub/Sub subscription name per line. Each subscription becomes an Iceberg table with the same name (hyphens converted to underscores):</>
                     : isDatastream(type)
-                    ? <>Enter tables as <code style={{ color: '#fdba74' }}>SCHEMA.TABLE</code> — one per line (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>):</>
+                    ? <>Enter tables as <code style={{ color: 'var(--status-warning)' }}>SCHEMA.TABLE</code> — one per line (e.g. <code style={{ color: 'var(--status-warning)' }}>HR.EMPLOYEES</code>):</>
                     : isDebeziumLike(type)
                     ? <>Enter table names exactly as Debezium sends them ({debeziumTableHint(type)}):</>
                     : <>No tables found — type table names manually:</>}
@@ -545,7 +545,7 @@ function SourceModal({ initial, onClose, onSaved }: {
             {err && <div style={S.errMsg}>{err}</div>}
             <div style={S.modalFooter}>
               <button style={S.btnSecondary} onClick={() => setStep('config')}>← Back</button>
-              <span style={{ color: '#64748b', fontSize: 13 }}>{tables.length} table{tables.length !== 1 ? 's' : ''} selected</span>
+              <span style={{ color: 'var(--secondary-foreground)', fontSize: 13 }}>{tables.length} table{tables.length !== 1 ? 's' : ''} selected</span>
               <button style={S.btnPrimary} onClick={handleSave} disabled={saving}>
                 {saving ? <Loader size={13} /> : null} {isEdit ? 'Save changes' : 'Add source'}
               </button>
@@ -591,15 +591,15 @@ function CreateTablesModal({ source, onClose }: { source: Source; onClose: () =>
         <div style={S.modalHeader}>
           <div>
             <h2 style={S.modalTitle}>Create tables in Dremio</h2>
-            <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
-              Source: <span style={{ color: '#93c5fd', fontFamily: 'monospace' }}>{source.name}</span>
+            <p style={{ color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 }}>
+              Source: <span style={{ color: 'var(--accent)', fontFamily: 'monospace' }}>{source.name}</span>
             </p>
           </div>
           <button style={S.btnIcon} onClick={onClose}><X size={16} /></button>
         </div>
 
         {loading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#64748b', padding: '24px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--secondary-foreground)', padding: '24px 0' }}>
             <Loader size={16} /> Introspecting schema…
           </div>
         )}
@@ -608,27 +608,27 @@ function CreateTablesModal({ source, onClose }: { source: Source; onClose: () =>
 
         {results && (
           <>
-            <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 12 }}>
+            <p style={{ color: 'var(--secondary-foreground)', fontSize: 13, marginBottom: 12 }}>
               {results.length} table{results.length !== 1 ? 's' : ''} will be created with CDC metadata columns
               (<span style={{ fontFamily: 'monospace', fontSize: 12 }}>_cdc_op, _cdc_source, _cdc_ts</span>).
             </p>
 
-            <div style={{ border: '1px solid #334155', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
               {results.map(r => (
-                <div key={r.table} style={{ borderBottom: '1px solid #1e293b' }}>
+                <div key={r.table} style={{ borderBottom: '1px solid var(--border)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
                     <StatusIcon status={r.status} />
                     <div style={{ flex: 1 }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0' }}>{r.table}</span>
-                      <span style={{ color: '#475569', fontSize: 12, marginLeft: 8 }}>→ {r.target}</span>
+                      <span style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--foreground)' }}>{r.table}</span>
+                      <span style={{ color: 'var(--muted-foreground)', fontSize: 12, marginLeft: 8 }}>→ {r.target}</span>
                     </div>
-                    {r.error && <span style={{ color: '#f87171', fontSize: 12 }}>{r.error}</span>}
+                    {r.error && <span style={{ color: 'var(--status-error)', fontSize: 12 }}>{r.error}</span>}
                     <button style={S.btnIconSm} onClick={() => setExpandedDdl(expandedDdl === r.table ? null : r.table)}>
                       <ChevronRight size={13} style={{ transform: expandedDdl === r.table ? 'rotate(90deg)' : 'none', transition: '0.15s' }} />
                     </button>
                   </div>
                   {expandedDdl === r.table && (
-                    <pre style={{ margin: 0, padding: '10px 14px', background: '#0a1628', fontSize: 12, color: '#7dd3fc', overflowX: 'auto', borderTop: '1px solid #1e293b' }}>
+                    <pre style={{ margin: 0, padding: '10px 14px', background: 'var(--muted)', fontSize: 12, color: 'var(--accent)', overflowX: 'auto', borderTop: '1px solid var(--border)' }}>
                       {r.ddl}
                     </pre>
                   )}
@@ -649,7 +649,7 @@ function CreateTablesModal({ source, onClose }: { source: Source; onClose: () =>
             </button>
           )}
           {allDone && !hasErrors && (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#4ade80', fontSize: 13 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--status-success)', fontSize: 13 }}>
               <CheckCircle size={14} /> All tables ready
             </span>
           )}
@@ -660,10 +660,10 @@ function CreateTablesModal({ source, onClose }: { source: Source; onClose: () =>
 }
 
 function StatusIcon({ status }: { status: CreateTableResult['status'] }) {
-  if (status === 'created') return <CheckCircle size={14} color="#4ade80" />
-  if (status === 'exists')  return <CheckCircle size={14} color="#60a5fa" />
-  if (status === 'error')   return <AlertCircle size={14} color="#f87171" />
-  return <span style={{ width: 14, height: 14, borderRadius: '50%', border: '1px solid #475569', display: 'inline-block' }} />
+  if (status === 'created') return <CheckCircle size={14} color="var(--status-success)" />
+  if (status === 'exists')  return <CheckCircle size={14} color="var(--accent)" />
+  if (status === 'error')   return <AlertCircle size={14} color="var(--status-error)" />
+  return <span style={{ width: 14, height: 14, borderRadius: '50%', border: '1px solid var(--border)', display: 'inline-block' }} />
 }
 
 type FieldDef = { key: string; label: string; placeholder?: string; default?: string; secret?: boolean }
@@ -786,10 +786,10 @@ function defaultDebeziumPort(type: string): number {
 
 function debeziumTableHint(type: string): React.ReactNode {
   if (type === 'oracle')
-    return <>Oracle uses uppercase <code style={{ color: '#fdba74' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: '#fdba74' }}>HR.EMPLOYEES</code>)</>
+    return <>Oracle uses uppercase <code style={{ color: 'var(--status-warning)' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: 'var(--status-warning)' }}>HR.EMPLOYEES</code>)</>
   if (type === 'db2')
-    return <>DB2 uses uppercase <code style={{ color: '#a78bfa' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: '#a78bfa' }}>HR.EMPLOYEE</code>)</>
-  return <>match <code style={{ color: '#fdba74' }}>table.include.list</code> in your Debezium properties</>
+    return <>DB2 uses uppercase <code style={{ color: 'var(--accent)' }}>SCHEMA.TABLE</code> (e.g. <code style={{ color: 'var(--accent)' }}>HR.EMPLOYEE</code>)</>
+  return <>match <code style={{ color: 'var(--status-warning)' }}>table.include.list</code> in your Debezium properties</>
 }
 
 function debeziumTablePlaceholder(type: string): string {
@@ -804,20 +804,20 @@ function defaultConn(type: string): Record<string, string> {
 
 function typeColor(type: string): React.CSSProperties {
   const map: Record<string, React.CSSProperties> = {
-    postgres:    { background: '#1e3a5f', color: '#93c5fd' },
-    mysql:       { background: '#1a2e1a', color: '#86efac' },
-    mariadb:     { background: '#1a2a1f', color: '#6ee7b7' },
-    mongodb:     { background: '#1f2937', color: '#6ee7b7' },
-    dynamodb:    { background: '#2d1f3d', color: '#c4b5fd' },
-    sqlserver:   { background: '#1f1a2e', color: '#a78bfa' },
-    snowflake:   { background: '#0f2537', color: '#67e8f9' },
-    cockroachdb: { background: '#1a1f2e', color: '#fca5a5' },
-    oracle:      { background: '#2d1a0a', color: '#fb923c' },
-    db2:         { background: '#1a1a2e', color: '#c084fc' },
-    debezium:    { background: '#2d1a0a', color: '#fdba74' },
-    spanner:     { background: '#0a2a1f', color: '#34d399' },
-    pubsub:      { background: '#1a2637', color: '#38bdf8' },
-    datastream:  { background: '#1a2637', color: '#7dd3fc' },
+    postgres:    { background: 'var(--status-info-bg)', color: 'var(--status-info)' },
+    mysql:       { background: 'var(--status-success-bg)', color: 'var(--status-success)' },
+    mariadb:     { background: 'var(--status-success-bg)', color: 'var(--accent)' },
+    mongodb:     { background: 'var(--muted)', color: 'var(--accent)' },
+    dynamodb:    { background: 'var(--selected)', color: 'var(--primary)' },
+    sqlserver:   { background: 'var(--muted)', color: 'var(--secondary-foreground)' },
+    snowflake:   { background: 'var(--status-info-bg)', color: 'var(--accent)' },
+    cockroachdb: { background: 'var(--status-error-bg)', color: 'var(--status-error)' },
+    oracle:      { background: 'var(--status-warning-bg)', color: 'var(--status-warning)' },
+    db2:         { background: 'var(--selected)', color: 'var(--accent)' },
+    debezium:    { background: 'var(--status-warning-bg)', color: 'var(--status-warning)' },
+    spanner:     { background: 'var(--status-success-bg)', color: 'var(--status-success)' },
+    pubsub:      { background: 'var(--status-info-bg)', color: 'var(--status-info)' },
+    datastream:  { background: 'var(--selected)', color: 'var(--accent)' },
   }
   return map[type] ?? {}
 }
@@ -825,50 +825,50 @@ function typeColor(type: string): React.CSSProperties {
 const S: Record<string, React.CSSProperties> = {
   page: { padding: 32, maxWidth: 900 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
-  title: { fontSize: 22, fontWeight: 700, color: '#f1f5f9' },
-  subtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--foreground)' },
+  subtitle: { color: 'var(--secondary-foreground)', fontSize: 13, marginTop: 4 },
   list: { display: 'flex', flexDirection: 'column', gap: 12 },
-  card: { background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: '14px 18px' },
+  card: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px' },
   cardRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  cardName: { fontWeight: 600, color: '#e2e8f0' },
-  tableCount: { color: '#64748b', fontSize: 12 },
-  treeTableRow: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', background: '#0f172a', marginBottom: 2 },
-  colBadge: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#60a5fa', background: '#1e3a5f', padding: '1px 6px', borderRadius: 3 },
+  cardName: { fontWeight: 600, color: 'var(--foreground)' },
+  tableCount: { color: 'var(--secondary-foreground)', fontSize: 12 },
+  treeTableRow: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', background: 'var(--muted)', marginBottom: 2 },
+  colBadge: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--accent)', background: 'var(--selected)', padding: '1px 6px', borderRadius: 3 },
   colPills: { display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 20, paddingBottom: 6 },
-  colPill: { fontFamily: 'monospace', fontSize: 11, color: '#94a3b8', background: '#0f172a', border: '1px solid #1e293b', padding: '1px 6px', borderRadius: 3 },
+  colPill: { fontFamily: 'monospace', fontSize: 11, color: 'var(--secondary-foreground)', background: 'var(--muted)', border: '1px solid var(--border)', padding: '1px 6px', borderRadius: 3 },
   typeBadge: { fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4 },
-  empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '80px 0', color: '#475569' },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
-  modal: { background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: 28, width: 560, maxHeight: '90vh', overflowY: 'auto' },
+  empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '80px 0', color: 'var(--secondary-foreground)' },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
+  modal: { background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: 28, width: 560, maxHeight: '90vh', overflowY: 'auto' },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 17, fontWeight: 700, color: '#f1f5f9' },
+  modalTitle: { fontSize: 17, fontWeight: 700, color: 'var(--foreground)' },
   steps: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 },
-  step: { fontSize: 12, fontWeight: 600, color: '#475569' },
-  stepActive: { color: '#93c5fd' },
-  stepDone: { color: '#4ade80' },
-  stepDivider: { color: '#334155', fontSize: 14 },
+  step: { fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)' },
+  stepActive: { color: 'var(--primary)' },
+  stepDone: { color: 'var(--status-success)' },
+  stepDivider: { color: 'var(--border)', fontSize: 14 },
   field: { marginBottom: 16 },
-  label: { display: 'block', color: '#94a3b8', fontSize: 12, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' },
-  input: { width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#e2e8f0', fontSize: 13, outline: 'none', boxSizing: 'border-box' },
+  label: { display: 'block', color: 'var(--secondary-foreground)', fontSize: 12, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' },
+  input: { width: '100%', background: '#fff', border: '1px solid var(--border)', borderRadius: 4, padding: '7px 10px', color: 'var(--foreground)', fontSize: 13, outline: 'none', boxSizing: 'border-box' },
   typeGrid: { display: 'flex', flexWrap: 'wrap', gap: 8 },
-  typeBtn: { background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '6px 14px', color: '#64748b', cursor: 'pointer', fontSize: 13, fontWeight: 500 },
-  typeBtnActive: { background: '#1e3a5f', border: '1px solid #2563eb', color: '#93c5fd' },
+  typeBtn: { background: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', color: 'var(--secondary-foreground)', cursor: 'pointer', fontSize: 13, fontWeight: 500 },
+  typeBtnActive: { background: 'var(--selected)', border: '1px solid var(--primary)', color: 'var(--accent)' },
   testBanner: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 8, border: '1px solid', fontSize: 13, marginBottom: 16 },
-  errMsg: { color: '#f87171', fontSize: 13, marginBottom: 12 },
-  modalFooter: { display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 24, paddingTop: 16, borderTop: '1px solid #334155', alignItems: 'center' },
-  tableScroll: { maxHeight: 360, overflowY: 'auto', border: '1px solid #334155', borderRadius: 8 },
-  tableRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'default', borderBottom: '1px solid #1e293b' },
-  colCountBadge: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#60a5fa', background: '#1e3a5f', padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap' },
-  colSection: { background: '#0a1628', borderBottom: '1px solid #1e293b', padding: '10px 12px 10px 32px' },
+  errMsg: { color: 'var(--status-error)', fontSize: 13, marginBottom: 12 },
+  modalFooter: { display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)', alignItems: 'center' },
+  tableScroll: { maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 },
+  tableRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'default', borderBottom: '1px solid var(--border)' },
+  colCountBadge: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--accent)', background: 'var(--selected)', padding: '2px 7px', borderRadius: 3, whiteSpace: 'nowrap' },
+  colSection: { background: 'var(--muted)', borderBottom: '1px solid var(--border)', padding: '10px 12px 10px 32px' },
   colGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '4px 16px' },
   colCheckRow: { display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '2px 0' },
-  maskSelect: { background: '#0f172a', border: '1px solid #1e293b', borderRadius: 4, color: '#94a3b8', fontSize: 10, padding: '1px 4px', cursor: 'pointer', maxWidth: 90 },
-  setupHint: { background: '#1a1f0a', border: '1px solid #365314', borderRadius: 8, padding: '12px 14px', marginBottom: 16, color: '#a3e635', fontSize: 13 },
-  code: { fontFamily: 'monospace', fontSize: 11, background: '#0f172a', padding: '1px 5px', borderRadius: 3, color: '#fde68a' },
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
-  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: '#0f172a', color: '#94a3b8', border: '1px solid #334155', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
-  btnSmall: { background: '#0f172a', color: '#94a3b8', border: '1px solid #334155', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 12 },
-  btnTiny: { background: '#0f172a', color: '#64748b', border: '1px solid #1e293b', padding: '3px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
-  btnIcon: { background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4, display: 'flex' },
-  btnIconSm: { background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' },
+  maskSelect: { background: '#fff', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--secondary-foreground)', fontSize: 10, padding: '1px 4px', cursor: 'pointer', maxWidth: 90 },
+  setupHint: { background: 'var(--status-info-bg)', border: '1px solid var(--status-info)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, color: 'var(--foreground)', fontSize: 13 },
+  code: { fontFamily: 'monospace', fontSize: 11, background: 'var(--muted)', padding: '1px 5px', borderRadius: 3, color: 'var(--accent)' },
+  btnPrimary: { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--primary)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 },
+  btnSecondary: { display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  btnSmall: { background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 12 },
+  btnTiny: { background: 'transparent', color: 'var(--secondary-foreground)', border: '1px solid var(--border)', padding: '3px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
+  btnIcon: { background: 'none', border: 'none', color: 'var(--secondary-foreground)', cursor: 'pointer', padding: 4, display: 'flex' },
+  btnIconSm: { background: 'none', border: 'none', color: 'var(--muted-foreground)', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' },
 }

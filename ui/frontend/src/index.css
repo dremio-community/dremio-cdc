@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --grey-0:   #FFFFFF;
+  --grey-50:  #F6F7F8;
+  --grey-75:  #EEEFF1;
+  --grey-150: #D2D6DA;
+  --grey-200: #B0B7BF;
+  --grey-500: #505862;
+  --grey-800: #202124;
+  --grey-900: #101214;
+
+  --primary-25:  #F1FAFB;
+  --primary-50:  #E9F5F9;
+  --primary-100: #C6E9EF;
+  --primary-300: #43B8C9;
+  --primary-400: #2E92A1;
+  --primary-450: #008489;
+
+  --danger-50:  #FDEDED;
+  --danger-400: #CA3F32;
+  --danger-500: #AD3021;
+
+  --warning-50:  #FFF4E5;
+  --warning-200: #FFA940;
+
+  --success-50:  #EDF7ED;
+  --success-300: #5ABD4A;
+
+  --fyi-50:  #E9F5F9;
+  --fyi-400: #0684F9;
+
+  --foreground:             var(--grey-800);
+  --secondary-foreground:   var(--grey-500);
+  --muted-foreground:       var(--grey-200);
+  --accent:                 var(--primary-450);
+  --card:                   var(--grey-0);
+  --background:             var(--grey-50);
+  --background-hover:       var(--primary-25);
+  --selected:               var(--primary-50);
+  --selected-hover:         var(--primary-100);
+  --muted:                  var(--grey-75);
+  --border:                 var(--grey-150);
+  --border-hover:           var(--grey-200);
+  --primary:                var(--primary-300);
+  --destructive:            var(--danger-400);
+  --destructive-hover:      var(--danger-500);
+  --sidebar:                #2A394A;
+  --sidebar-foreground:     var(--grey-0);
+  --sidebar-primary:        var(--primary-400);
+  --sidebar-accent:         #485767;
+  --sidebar-border:         var(--grey-500);
+  --status-error:           var(--danger-400);
+  --status-warning:         var(--warning-200);
+  --status-success:         var(--success-300);
+  --status-info:            var(--fyi-400);
+  --status-error-bg:        var(--danger-50);
+  --status-warning-bg:      var(--warning-50);
+  --status-success-bg:      var(--success-50);
+  --status-info-bg:         var(--fyi-50);
+  --icon-default:           var(--grey-500);
+  --icon-hover:             var(--primary-450);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { text-decoration: none; color: inherit; }
