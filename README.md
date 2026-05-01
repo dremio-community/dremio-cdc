@@ -1,6 +1,8 @@
 # Dremio CDC
 
-[![Docker Hub](https://img.shields.io/docker/v/mshainman/dremio-cdc?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/mshainman/dremio-cdc)
+### 🐳 [hub.docker.com/r/mshainman/dremio-cdc](https://hub.docker.com/r/mshainman/dremio-cdc)
+
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-mshainman%2Fdremio--cdc-0db7ed?style=for-the-badge&logo=docker)](https://hub.docker.com/r/mshainman/dremio-cdc)
 [![GitHub](https://img.shields.io/badge/GitHub-dremio--community%2Fdremio--cdc-blue?logo=github)](https://github.com/dremio-community/dremio-cdc)
 
 📖 **[Visual User Guide](https://htmlpreview.github.io/?https://github.com/dremio-community/dremio-cdc/blob/main/docs/VISUAL_GUIDE.html)** — step-by-step walkthrough with real screenshots
